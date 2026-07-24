@@ -1,6 +1,6 @@
 # Install
 
-Knew Karma needs Python 3.11 or newer.
+Knew Karma needs Python 3.12 or newer.
 
 ## From PyPI
 
