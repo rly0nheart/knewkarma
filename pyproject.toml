@@ -32,7 +32,7 @@ rich-click = "^1.8.9"
 myst-parser = "^3.0.1"
 poetry = "^1.8.3"
 sphinx = "^7.4.7"
-sphinx-rtd-theme = "^2.0.0"
+sphinx-rtd-theme = ">=2,<4"
 
 [tool.poetry.scripts]
 rauth = "knewkarma.cli.commands:auth"
