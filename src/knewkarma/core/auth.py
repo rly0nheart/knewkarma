@@ -23,29 +23,43 @@ _TOKEN_CACHE = _CACHE_DIR / "token.json"
 class RedditAuth:
     """Owns the session and hands out a valid anonymous bearer token."""
 
-    def __init__(
-            self,
-            user_agent: t.Optional[str] = None,
-            session: t.Optional[requests.Session] = None,
-    ):
+    def __init__(self, user_agent: t.Optional[str] = None):
         """
         Set up the auth.
 
         :param user_agent: User agent to send. Falls back to ``KNEWKARMA_USER_AGENT``, then to
             RedReader's user agent.
         :type user_agent: t.Optional[str]
-        :param session: An existing requests session to reuse.
-        :type session: t.Optional[requests.Session]
         """
 
         self.__user_agent = (
                 user_agent or os.getenv("KNEWKARMA_USER_AGENT") or "org.quantumbadger.redreader/1.25.2"
         )
-        self.session = session or requests.Session()
+        self.session = requests.Session()
         self.session.headers["User-Agent"] = self.__user_agent
-        self.__token: t.Optional[str] = None
+        self.__token: str = ""
         self.__token_expiry: float = 0.0
         self.on_status: t.Optional[t.Callable[[str], None]] = None
+
+    def close(self):
+        """Close the session."""
+
+        self.session.close()
+
+    def __enter__(self) -> "RedditAuth":
+        """
+        Enter the context and return this auth.
+
+        :returns: This auth.
+        :rtype: RedditAuth
+        """
+
+        return self
+
+    def __exit__(self, *exc_info: t.Any):
+        """Leave the context and close the session."""
+
+        self.close()
 
     @staticmethod
     def __is_still_fresh(expiry: float) -> bool:

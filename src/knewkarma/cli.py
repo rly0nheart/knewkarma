@@ -10,17 +10,51 @@ import typing as t
 from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
+from rich.console import Console
+from rich.pretty import Pretty
 
-from . import LISTINGS, SORT, TIME_FILTERS, Reddit, export, output
+from . import LISTINGS, SORT, TIME_FILTERS, Reddit, export
 from .core.models import RedditObject
 from .meta.about import Project
 from .meta.license import License
 from .meta.version import Version
 
-EXPORT_DIR = "exports"
+console = Console()
 
-reddit = Reddit()
+
+def pretty_print(
+        items: t.Union[RedditObject, t.Sequence[RedditObject], t.Sequence[str], None],
+):
+    """
+    Show a result.
+
+    A list of models pages through the pager, so the user scrolls through bulk results. A single
+    model pretty-prints its fields, with no pager. An empty result prints a short note.
+
+    :param items: A single model, a list of models, a list of wiki page names, or None.
+    :type items: t.Union[RedditObject, t.Sequence[RedditObject], t.Sequence[str], None]
+    """
+
+    if not isinstance(items, (list, tuple)):
+        if items is None:
+            console.print("No results.")
+        else:
+            console.print(Pretty(items))
+        return
+
+    rows = list(items)
+    if not rows:
+        console.print("No results.")
+        return
+
+    with console.pager(styles=True):
+        for index, row in enumerate(rows):
+            if index:
+                console.print()
+            console.print(Pretty(row))
+
+
+EXPORT_DIR = "exports"
 
 
 def _add_output(sub: argparse.ArgumentParser):
@@ -101,6 +135,7 @@ def _add_search_options(sub: argparse.ArgumentParser):
 
 
 def execute(
+        reddit: Reddit,
         thunk: t.Callable[[], t.Union[RedditObject, t.Sequence[RedditObject], t.Sequence[str], None]],
         command: str,
         label: str,
@@ -110,6 +145,8 @@ def execute(
     """
     Run one command: fetch the data, show it, then export it when asked.
 
+    :param reddit: The Reddit handle to read through.
+    :type reddit: Reddit
     :param thunk: The function that fetches the data.
     :type thunk: t.Union[RedditObject, t.Sequence[RedditObject], t.Sequence[str], None]
     :param command: The subcommand name. Goes into the export filename.
@@ -122,7 +159,7 @@ def execute(
     :type status_msg: str
     """
 
-    with output.console.status(f"[dim]{status_msg}[/]…") as status:
+    with console.status(f"[dim]{status_msg}[/]…") as status:
         def progress(count: int, target: t.Optional[int]):
             tally = f"{count}/{target}" if target else str(count)
             status.update(f"[dim]{status_msg}[/]… [{tally}]")
@@ -135,7 +172,7 @@ def execute(
             reddit.on_progress = None
             reddit.on_status = None
 
-    output.show(data)
+    pretty_print(items=data)
 
     formats = [fmt.strip() for fmt in export_formats.split(",") if fmt.strip()]
     if not formats or not data:
@@ -145,16 +182,17 @@ def execute(
     Path(EXPORT_DIR).mkdir(exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     base = str(Path(EXPORT_DIR) / f"{command}-{label}-{stamp}")
-    with output.console.status(f"[dim]Exporting {command} {label}[/]…"):
+    with console.status(f"[dim]Exporting {command} {label}[/]…"):
         written = export.write(rows, base, formats)
     for path in written:
-        output.console.print(f"Wrote {path}")
+        console.print(f"Wrote {path}")
 
 
-def _cmd_post(args: argparse.Namespace):
+def _cmd_post(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``post`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.post(args.id).about(),
         command="post",
         label=args.id,
@@ -163,10 +201,11 @@ def _cmd_post(args: argparse.Namespace):
     )
 
 
-def _cmd_post_comments(args: argparse.Namespace):
+def _cmd_post_comments(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``post ID comments`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.post(args.id).comments(sort=args.sort, limit=args.limit, depth=args.depth),
         command="post",
         label=f"{args.id}-comments",
@@ -175,10 +214,11 @@ def _cmd_post_comments(args: argparse.Namespace):
     )
 
 
-def _cmd_feed(args: argparse.Namespace):
+def _cmd_feed(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``feed`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.subreddit("").posts(
             listing=args.listing, limit=args.limit, timeframe=args.timeframe
         ),
@@ -189,10 +229,11 @@ def _cmd_feed(args: argparse.Namespace):
     )
 
 
-def _cmd_subreddit(args: argparse.Namespace):
+def _cmd_subreddit(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME`` profile command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.subreddit(args.name).about(),
         command="subreddit",
         label=f"{args.name}-profile",
@@ -201,10 +242,11 @@ def _cmd_subreddit(args: argparse.Namespace):
     )
 
 
-def _cmd_subreddit_posts(args: argparse.Namespace):
+def _cmd_subreddit_posts(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME posts`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.subreddit(args.name).posts(
             listing=args.listing, limit=args.limit, timeframe=args.timeframe
         ),
@@ -215,10 +257,11 @@ def _cmd_subreddit_posts(args: argparse.Namespace):
     )
 
 
-def _cmd_subreddit_comments(args: argparse.Namespace):
+def _cmd_subreddit_comments(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME comments`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.subreddit(args.name).comments(limit=args.limit),
         command="subreddit",
         label=f"{args.name}-comments",
@@ -227,10 +270,11 @@ def _cmd_subreddit_comments(args: argparse.Namespace):
     )
 
 
-def _cmd_subreddit_search(args: argparse.Namespace):
+def _cmd_subreddit_search(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME search QUERY`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.subreddit(args.name).search(
             args.query,
             sort=args.sort,
@@ -244,18 +288,20 @@ def _cmd_subreddit_search(args: argparse.Namespace):
     )
 
 
-def _cmd_subreddit_wiki_pages(args: argparse.Namespace):
+def _cmd_subreddit_wiki_pages(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME wiki-pages`` command."""
 
-    execute(thunk=lambda: reddit.subreddit(args.name).wiki_pages(), command="subreddit", label="subreddit-wiki-pages",
-            export_formats=args.export, status_msg=f"Getting wiki pages for r/{args.name}")
+    execute(reddit=reddit, thunk=lambda: reddit.subreddit(args.name).wiki_pages(), command="subreddit",
+            label="subreddit-wiki-pages", export_formats=args.export,
+            status_msg=f"Getting wiki pages for r/{args.name}")
 
 
-def _cmd_subreddits(args: argparse.Namespace):
+def _cmd_subreddits(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddits`` command."""
 
     kind = args.which
     execute(
+        reddit=reddit,
         thunk=lambda: getattr(reddit.subreddits, kind)(limit=args.limit),
         command="subreddits",
         label=kind,
@@ -264,10 +310,11 @@ def _cmd_subreddits(args: argparse.Namespace):
     )
 
 
-def _cmd_user(args: argparse.Namespace):
+def _cmd_user(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME`` profile command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.user(args.username).about(),
         command="user",
         label=f"{args.username}-profile",
@@ -276,10 +323,11 @@ def _cmd_user(args: argparse.Namespace):
     )
 
 
-def _cmd_user_posts(args: argparse.Namespace):
+def _cmd_user_posts(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME posts`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.user(args.username).posts(
             listing=args.listing, limit=args.limit, timeframe=args.timeframe
         ),
@@ -290,10 +338,11 @@ def _cmd_user_posts(args: argparse.Namespace):
     )
 
 
-def _cmd_user_comments(args: argparse.Namespace):
+def _cmd_user_comments(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME comments`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.user(args.username).comments(limit=args.limit, sort=args.sort),
         command="user",
         label=f"{args.username}-comments",
@@ -302,10 +351,11 @@ def _cmd_user_comments(args: argparse.Namespace):
     )
 
 
-def _cmd_user_overview(args: argparse.Namespace):
+def _cmd_user_overview(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME overview`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.user(args.username).overview(limit=args.limit),
         command="user",
         label=f"{args.username}-overview",
@@ -314,10 +364,11 @@ def _cmd_user_overview(args: argparse.Namespace):
     )
 
 
-def _cmd_user_moderated(args: argparse.Namespace):
+def _cmd_user_moderated(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME moderated`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.user(args.name).moderated(),
         command="user",
         label=f"{args.name}-moderated",
@@ -326,10 +377,11 @@ def _cmd_user_moderated(args: argparse.Namespace):
     )
 
 
-def _cmd_user_trophies(args: argparse.Namespace):
+def _cmd_user_trophies(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME trophies`` command."""
 
     execute(
+        reddit=reddit,
         thunk=lambda: reddit.user(args.name).trophies(),
         command="user",
         label=f"{args.name}-trophies",
@@ -338,11 +390,12 @@ def _cmd_user_trophies(args: argparse.Namespace):
     )
 
 
-def _cmd_users(args: argparse.Namespace):
+def _cmd_users(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``users`` command."""
 
     kind = args.which
     execute(
+        reddit=reddit,
         thunk=lambda: getattr(reddit.users, kind)(limit=args.limit),
         command="users",
         label=kind,
@@ -351,11 +404,12 @@ def _cmd_users(args: argparse.Namespace):
     )
 
 
-def _cmd_search(args: argparse.Namespace):
+def _cmd_search(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``search`` command."""
 
     if args.kind == "subreddits":
         execute(
+            reddit=reddit,
             thunk=lambda: reddit.search.subreddits(args.query, limit=args.limit),
             command="search",
             label="subreddits",
@@ -364,6 +418,7 @@ def _cmd_search(args: argparse.Namespace):
         )
     elif args.kind == "users":
         execute(
+            reddit=reddit,
             thunk=lambda: reddit.search.users(args.query, limit=args.limit),
             command="search",
             label="users",
@@ -372,6 +427,7 @@ def _cmd_search(args: argparse.Namespace):
         )
     else:
         execute(
+            reddit=reddit,
             thunk=lambda: reddit.search.posts(
                 args.query, sort=args.sort, timeframe=args.timeframe, limit=args.limit
             ),
@@ -382,16 +438,16 @@ def _cmd_search(args: argparse.Namespace):
         )
 
 
-def _cmd_license(args: argparse.Namespace):
+def _cmd_license():
     """Handle the ``license`` conditions command."""
 
-    output.console.print(License.conditions)
+    console.print(License.conditions)
 
 
-def _cmd_license_warranty(args: argparse.Namespace):
+def _cmd_license_warranty():
     """Handle the ``license warranty`` command."""
 
-    output.console.print(License.warranty)
+    console.print(License.warranty)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -560,24 +616,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _report_status():
-    """Check Reddit's status page and print a line about it."""
-
-    try:
-        with output.console.status("[dim]Checking Reddit status[/]…"):
-            status = reddit.status()
-    except requests.RequestException:
-        output.console.print("[yellow]Could not reach Reddit's status page.[/]")
-        return
-
-    indicator = status.get("indicator", "unknown")
-    description = status.get("description", "Unknown")
-    if indicator == "none":
-        output.console.print(f"[green]{description}[/]")
-    else:
-        output.console.print(f"[yellow]{indicator}: {description}[/]")
-
-
 def main(argv: t.Optional[t.Sequence[str]] = None):
     """
     Run the command line.
@@ -590,19 +628,22 @@ def main(argv: t.Optional[t.Sequence[str]] = None):
     """
 
     start = datetime.now(timezone.utc)
+    console.set_window_title(title=f"{Project.name} v{Version.release}")
     try:
         parser = build_parser()
         args = parser.parse_args(argv)
-        if args.command != "license":
-            _report_status()
-        args.func(args)
+        if args.command == "license":
+            args.func()
+        else:
+            with Reddit() as reddit:
+                args.func(args=args, reddit=reddit)
     except KeyboardInterrupt:
-        output.console.print("\n[yellow]User interruption detected[/]")
+        console.print("\nUser interruption detected([yellow]Ctrl+C[/])")
     except Exception as e:
-        output.console.print(f"An error occurred: [red]{e}[/]")
+        console.print(f"An error occurred: [red]{e}[/]")
 
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-    output.console.print(f"[dim]Finished in {elapsed:.2f}s[/]")
+    console.print(f"Finished in {elapsed:.2f}s")
 
 
 if __name__ == "__main__":
