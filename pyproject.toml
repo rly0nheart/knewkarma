@@ -1,6 +1,6 @@
 [project]
 name = "knewkarma"
-version = "8.0.0"
+version = "8.0.1"
 description = "Reddit-data analysis toolkit"
 authors = [{ name = "Ritchie Mwewa", email = "rly0nheart@duck.com" }]
 readme = "README.md"
