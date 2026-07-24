@@ -5,13 +5,10 @@ from datetime import date
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src")))
 
 from knewkarma.meta.about import Author, Project
-from knewkarma.meta.version import Version
 
 project = Project.name
 author = Author.name
 copyright = f"{date.today().year}, {Author.name}"
-release = Version.full_version
-version = Version.release
 
 extensions = [
     "myst_parser",
