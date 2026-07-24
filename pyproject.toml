@@ -1,10 +1,11 @@
-[tool.poetry]
+[project]
 name = "knewkarma"
-version = "7.2.1"
+version = "8.0.0"
 description = "Reddit-data analysis toolkit"
-authors = ["Ritchie Mwewa <rly0nheart@duck.com>"]
+authors = [{ name = "Ritchie Mwewa", email = "rly0nheart@duck.com" }]
 readme = "README.md"
-license = "GPL-3.0+"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.11"
 keywords = ["reddit", "data-analysis"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -12,41 +13,31 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Education",
     "Operating System :: OS Independent",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
-    "Natural Language :: English"
+    "Natural Language :: English",
+]
+dependencies = [
+    "requests>=2.32.3",
+    "rich>=13.7.1",
 ]
 
-[tool.poetry.urls]
+[project.urls]
 issues = "https://codeberg.org/rly0nheart/knewkarma/issues"
 repository = "https://codeberg.org/rly0nheart/knewkarma"
 
-[tool.poetry.dependencies]
-python = "^3.11"
-requests = "^2.32.3"
-pandas = "^2.1.4"
-praw = "^7.7.1"
-pydantic = "^2.11.5"
-rich-click = "^1.8.9"
+[project.scripts]
+knewkarma = "knewkarma.cli:main"
 
-[tool.poetry.group.dev.dependencies]
-myst-parser = "^3.0.1"
-poetry = "^1.8.3"
-sphinx = "^7.4.7"
-sphinx-rtd-theme = "^2.0.0"
-
-[tool.poetry.scripts]
-rauth = "knewkarma.cli.commands:auth"
-ruser = "knewkarma.cli.commands:user"
-rusers = "knewkarma.cli.commands:cmd_users"
-rsubreddit = "knewkarma.cli.commands:subreddit"
-rsubreddits = "knewkarma.cli.commands:cmd_subreddits"
-rsearch = "knewkarma.cli.commands:cmd_search"
-rpost = "knewkarma.cli.commands:post"
-rposts = "knewkarma.cli.commands:cmd_posts"
-knewkarma = "knewkarma.cli.commands:cli"
+[dependency-groups]
+dev = [
+    "myst-parser>=3.0.1",
+    "pytest>=9.1.1",
+    "sphinx>=7.4.7",
+    "sphinx-rtd-theme>=2.0.0",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-
+[tool.hatch.build.targets.wheel]
+packages = ["src/knewkarma"]
