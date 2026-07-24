@@ -5,7 +5,16 @@ Build a `Reddit` client for scripts.
 ```python
 from knewkarma import Reddit
 
-reddit = Reddit()
+reddit = Reddit(user_agent="MyKnewKarmaApp/1.0")
+```
+
+Or as a context manager:
+
+```python
+from knewkarma import Reddit
+
+with Reddit(user_agent="MyKnewKarmaApp/1.0") as reddit:
+    ...
 ```
 
 ## Users

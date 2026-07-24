@@ -9,8 +9,6 @@ sits behind them and supplies the session and token. Nothing here exposes them.
 
 import typing as t
 
-import requests
-
 from .auth import RedditAuth
 from .models import (
     Comment,
@@ -775,33 +773,50 @@ class Reddit:
     """
     The Reddit API, grouped by entity.
 
-    Build one, then reach an entity through its handle::
+    Build one as a context manager so the session it owns is closed on exit, then reach an entity
+    through its handle:
 
-        reddit = Reddit()
-        reddit.user("spez").about()
-        reddit.subreddit("python").posts(listing="top", timeframe="week")
-        reddit.search.posts("climate")
+    .. code-block:: python
+
+        with Reddit() as reddit:
+            reddit.user("spez").about()
+            reddit.subreddit("python").posts(listing="top", timeframe="week")
+            reddit.search.posts("climate")
 
     A handle is cheap and runs no request. The read happens when you call a method on it.
     """
 
-    def __init__(
-            self,
-            user_agent: t.Optional[str] = None,
-            session: t.Optional[requests.Session] = None,
-    ):
+    def __init__(self, user_agent: t.Optional[str] = None):
         """
         Set up the API.
 
         :param user_agent: User agent to send. Falls back to ``KNEWKARMA_USER_AGENT``, then to a
             built-in one.
         :type user_agent: t.Optional[str]
-        :param session: An existing requests session to reuse.
-        :type session: t.Optional[requests.Session]
         """
 
-        self.__auth = RedditAuth(user_agent=user_agent, session=session)
+        self.__auth = RedditAuth(user_agent=user_agent)
         self.on_progress: t.Optional[t.Callable[[int, t.Optional[int]], None]] = None
+
+    def close(self) -> None:
+        """Close the session. See :meth:`RedditAuth.close`."""
+
+        self.__auth.close()
+
+    def __enter__(self) -> "Reddit":
+        """
+        Enter the context and return this instance.
+
+        :returns: This instance.
+        :rtype: Reddit
+        """
+
+        return self
+
+    def __exit__(self, *exc_info: t.Any) -> None:
+        """Leave the context and close the session."""
+
+        self.close()
 
     def __handle(self, cls: t.Callable[..., Handle], *args: str) -> Handle:
         """
