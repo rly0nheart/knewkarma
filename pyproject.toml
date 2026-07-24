@@ -23,7 +23,7 @@ repository = "https://codeberg.org/rly0nheart/knewkarma"
 [tool.poetry.dependencies]
 python = "^3.11"
 requests = "^2.32.3"
-pandas = "^2.1.4"
+pandas = ">=2.1.4,<4.0.0"
 praw = "^7.7.1"
 pydantic = "^2.11.5"
 rich-click = "^1.8.9"
