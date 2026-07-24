@@ -582,15 +582,27 @@ def main(argv: t.Optional[t.Sequence[str]] = None):
     """
     Run the command line.
 
+    Catches a Ctrl-C and any error so the program ends with a clear line rather than a traceback,
+    then reports how long it ran. A plain ``--help`` or ``--version`` exits before that line.
+
     :param argv: Arguments to parse. Defaults to ``sys.argv``.
     :type argv: t.Optional[t.Sequence[str]]
     """
 
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.command != "license":
-        _report_status()
-    args.func(args)
+    start = datetime.now(timezone.utc)
+    try:
+        parser = build_parser()
+        args = parser.parse_args(argv)
+        if args.command != "license":
+            _report_status()
+        args.func(args)
+    except KeyboardInterrupt:
+        output.console.print("\n[yellow]User interruption detected[/]")
+    except Exception as e:
+        output.console.print(f"An error occurred: [red]{e}[/]")
+
+    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+    output.console.print(f"[dim]Finished in {elapsed:.2f}s[/]")
 
 
 if __name__ == "__main__":
