@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [8.0.1] - 2026-07-24
+## [8.0.2] - 2026-07-24
 
 ### Added
 
@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Major update to post display format
 - Refine viewing posts and comments
 - Add render methods for other retirevable reddit data
-- Drop using ups and downs to represent upvotes and downvotes as these arent very reliable. Instead, I'm using score and place it in between up and down arrows
+- Drop using ups and downs to represent upvotes and downvotes as these arent very reliable. Instead, I'm using score and
+  place it in between up and down arrows
 - Drop aiohttp.ClientSession, for requests.Session
 - Clean CLI logic and proper implementation of the license command
 - Minor module and class renaming
@@ -86,11 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [5.4.0] - 2024-07-31
 
-- rename the 'keyword' params in 'knewkarma.User().search_comments()' and 'knewkarma.User().search_posts()' to 'query', and improved searching in these methods.
+- rename the 'keyword' params in 'knewkarma.User().search_comments()' and 'knewkarma.User().search_posts()' to 'query',
+  and improved searching in these methods.
 
 ## [5.3.15] - 2024-07-29
 
-- Move to , and drop the suffix parameter. Improve data checking in . If invalid data is provided, raise a exception. Optimise code
+- Move to , and drop the suffix parameter. Improve data checking in . If invalid data is provided, raise a exception.
+  Optimise code
 
 ## [5.3.14] - 2024-07-29
 
@@ -158,7 +161,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SHow exported files in a tree-like structure
 - Add statuses
 - Automatic sleep timer when getting bulk data
-- Option to specify output time format --time-format (, LANG=en_ZM LANGUAGE=en_ZM:en LC_CTYPE="en_ZM" LC_NUMERIC="en_ZM" LC_TIME="en_ZM" LC_COLLATE="en_ZM" LC_MONETARY="en_ZM" LC_MESSAGES="en_ZM" LC_PAPER="en_ZM" LC_NAME="en_ZM" LC_ADDRESS="en_ZM" LC_TELEPHONE="en_ZM" LC_MEASUREMENT="en_ZM" LC_IDENTIFICATION="en_ZM" LC_ALL=)
+- Option to specify output time format --time-format (, LANG=en_ZM LANGUAGE=en_ZM:en LC_CTYPE="en_ZM" LC_NUMERIC="en_ZM"
+  LC_TIME="en_ZM" LC_COLLATE="en_ZM" LC_MONETARY="en_ZM" LC_MESSAGES="en_ZM" LC_PAPER="en_ZM" LC_NAME="en_ZM"
+  LC_ADDRESS="en_ZM" LC_TELEPHONE="en_ZM" LC_MEASUREMENT="en_ZM" LC_IDENTIFICATION="en_ZM" LC_ALL=)
 - Release candidate 4
 - Tried to make it add an icon in the app menu, didn't go very well, so I'll have it without it... for now
 - Bum version 3.5 -> 4.0
@@ -186,13 +191,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add -t/--timeframe flag for specifying the timeframe from which posts/comments will be fetched from, defaults to 'all'
 - Improved output with rich.pretty
 - Minor unimportant changes
-- Improved data writing to files. Showing Awardee Karma in User data output. Separated data classes to a different file: data.py. Doc strings in base.py ;)
+- Improved data writing to files. Showing Awardee Karma in User data output. Separated data classes to a different file:
+  data.py. Doc strings in base.py ;)
 
 ## [3.0.0.0] - 2023-12-01
 
 - Working as a Python library. Getting more than 100 posts/comments (beta). Dropped dependency on plyer
 - Sending asynchronous requests. Implemented run-time profiling
-- Refactored to be used as a Python library while maintaining the CLI functionality. Implement sending asyncronous requests and runtime profiling (CLI)
+- Refactored to be used as a Python library while maintaining the CLI functionality. Implement sending asyncronous
+  requests and runtime profiling (CLI)
 - Update: _cli.py
 - Update: _cli.py. Major changes in code structure
 - Fully asynchronous. Further code optimisations and restructuring
