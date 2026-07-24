@@ -1,24 +1,21 @@
-# This workflow will upload a Python Package to PyPI when a release is created
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python#publishing-to-package-registries
-
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
+# Builds the package, cuts a GitHub Release, and publishes to PyPI on every push to master.
 
 name: Upload Python Package
 
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]
 
 permissions:
-  contents: read
+  contents: write   # needed to create the GitHub Release
+  id-token: write   # needed for PyPI trusted publishing
 
 jobs:
   release-build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      release_notes: ${{ steps.get_notes.outputs.notes }}
 
     steps:
       - uses: actions/checkout@v4
@@ -27,11 +24,33 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Get version from pyproject.toml
+        id: get_version
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract release notes from CHANGELOG
+        id: get_notes
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          NOTES=$(awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (found) exit
+              if ($0 ~ "\\[" ver "\\]") found=1
+              next
+            }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md)
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Build release distributions
         run: |
-          # NOTE: put your own distribution build steps here.
-          python -m pip install build
-          python -m build
+          python -m pip install uv
+          python -m uv build
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
@@ -39,16 +58,34 @@ jobs:
           name: release-dists
           path: dist/
 
+  github-release:
+    runs-on: ubuntu-latest
+    needs: release-build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-build.outputs.version }}
+          name: ${{ needs.release-build.outputs.version }}
+          body: ${{ needs.release-build.outputs.release_notes }}
+          files: dist/*
+          generate_release_notes: false
+
   pypi-publish:
     runs-on: ubuntu-latest
     needs:
       - release-build
-    permissions:
-      # IMPORTANT: this permission is mandatory for trusted publishing
-      id-token: write
+      - github-release
 
-    # Dedicated environments with protections for publishing are strongly recommended.
-    # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
     environment:
       name: pypi
       url: https://pypi.org/p/knewkarma
@@ -64,3 +101,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip-existing: true
