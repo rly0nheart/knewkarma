@@ -60,14 +60,14 @@ class RedditObject:
         return converted
 
     @classmethod
-    def from_data(cls, data: t.Dict[str, t.Any]) -> "RedditObject":
+    def from_data(cls, data: t.Dict[str, t.Any]) -> t.Self:
         """
         Wrap a thing's ``data`` body.
 
         :param data: The thing's ``data`` dict.
         :type data: t.Dict[str, t.Any]
-        :returns: The wrapped object.
-        :rtype: RedditObject
+        :returns: The wrapped object, of the class it was called on.
+        :rtype: t.Self
         """
 
         return cls(data)
@@ -158,7 +158,7 @@ def parse_thing(thing: t.Dict[str, t.Any]) -> t.Optional[Thing]:
     :rtype: t.Optional[Thing]
     """
 
-    builder = _BUILDERS.get(thing.get("kind"))
+    builder = _BUILDERS.get(thing.get("kind", ""))
     if builder is None:
         return None
     return builder(thing.get("data", {}))

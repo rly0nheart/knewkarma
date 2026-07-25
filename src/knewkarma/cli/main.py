@@ -13,18 +13,20 @@ from pathlib import Path
 from rich.console import Console
 from rich.pretty import Pretty
 
-from . import LISTINGS, SORT, TIME_FILTERS, Reddit, export
-from .core.models import RedditObject
-from .meta.about import Project
-from .meta.license import License
-from .meta.version import Version
+from . import export
+from .. import KINDS, LISTINGS, SORT, TIME_FILTERS, Reddit
+from ..core.models import RedditObject
+from ..meta.about import Project
+from ..meta.license import License
+from ..meta.version import Version
 
-console = Console()
+EXPORT_DIR = "exports"
+console = Console(log_time=False)
+# What a command hands back: one model, a row of models or wiki page names, or nothing.
+Result = t.Union[RedditObject, t.Sequence[t.Union[RedditObject, str]], None]
 
 
-def pretty_print(
-        items: t.Union[RedditObject, t.Sequence[RedditObject], t.Sequence[str], None],
-):
+def __pretty_print(items: Result):
     """
     Show a result.
 
@@ -32,19 +34,19 @@ def pretty_print(
     model pretty-prints its fields, with no pager. An empty result prints a short note.
 
     :param items: A single model, a list of models, a list of wiki page names, or None.
-    :type items: t.Union[RedditObject, t.Sequence[RedditObject], t.Sequence[str], None]
+    :type items: Result
     """
 
     if not isinstance(items, (list, tuple)):
         if items is None:
-            console.print("No results.")
+            console.log("No results.")
         else:
             console.print(Pretty(items))
         return
 
     rows = list(items)
     if not rows:
-        console.print("No results.")
+        console.log("No results.")
         return
 
     with console.pager(styles=True):
@@ -54,10 +56,7 @@ def pretty_print(
             console.print(Pretty(row))
 
 
-EXPORT_DIR = "exports"
-
-
-def _add_output(sub: argparse.ArgumentParser):
+def __add_output(sub: argparse.ArgumentParser):
     """
     Add export options to a subcommand.
 
@@ -73,13 +72,13 @@ def _add_output(sub: argparse.ArgumentParser):
     )
 
 
-def _add_limit(sub: argparse.ArgumentParser):
+def __add_limit(sub: argparse.ArgumentParser):
     """Add a result limit option to a subcommand."""
 
     sub.add_argument("-l", "--limit", type=int, default=100, help="maximum results")
 
 
-def _add_sort(sub: argparse.ArgumentParser):
+def __add_sort(sub: argparse.ArgumentParser):
     """Add a Reddit search/comment sort option to a subcommand."""
 
     sub.add_argument(
@@ -87,13 +86,13 @@ def _add_sort(sub: argparse.ArgumentParser):
     )
 
 
-def _add_comment_sort(sub: argparse.ArgumentParser, default: str):
+def __add_comment_sort(sub: argparse.ArgumentParser, default: str):
     """Add a Reddit comment sort option to a subcommand."""
 
     sub.add_argument("-s", "--sort", choices=t.get_args(SORT), default=default, help="sort order")
 
 
-def _add_timeframe(sub: argparse.ArgumentParser):
+def __add_timeframe(sub: argparse.ArgumentParser):
     """Add a Reddit timeframe option to a subcommand."""
 
     sub.add_argument(
@@ -105,7 +104,7 @@ def _add_timeframe(sub: argparse.ArgumentParser):
     )
 
 
-def _add_listing(sub: argparse.ArgumentParser):
+def __add_listing(sub: argparse.ArgumentParser):
     """Add a Reddit listing option to a subcommand."""
 
     sub.add_argument(
@@ -116,27 +115,27 @@ def _add_listing(sub: argparse.ArgumentParser):
     )
 
 
-def _add_feed_options(sub: argparse.ArgumentParser):
+def __add_feed_options(sub: argparse.ArgumentParser):
     """Add options used by feed-style commands."""
 
-    _add_limit(sub)
-    _add_listing(sub)
-    _add_timeframe(sub)
-    _add_output(sub)
+    __add_limit(sub)
+    __add_listing(sub)
+    __add_timeframe(sub)
+    __add_output(sub)
 
 
-def _add_search_options(sub: argparse.ArgumentParser):
+def __add_search_options(sub: argparse.ArgumentParser):
     """Add options used by search commands."""
 
-    _add_limit(sub)
-    _add_sort(sub)
-    _add_timeframe(sub)
-    _add_output(sub)
+    __add_limit(sub)
+    __add_sort(sub)
+    __add_timeframe(sub)
+    __add_output(sub)
 
 
-def execute(
+def __run_command(
         reddit: Reddit,
-        thunk: t.Callable[[], t.Union[RedditObject, t.Sequence[RedditObject], t.Sequence[str], None]],
+        thunk: t.Callable[[], Result],
         command: str,
         label: str,
         export_formats: str,
@@ -148,7 +147,7 @@ def execute(
     :param reddit: The Reddit handle to read through.
     :type reddit: Reddit
     :param thunk: The function that fetches the data.
-    :type thunk: t.Union[RedditObject, t.Sequence[RedditObject], t.Sequence[str], None]
+    :type thunk: t.Callable[[], Result]
     :param command: The subcommand name. Goes into the export filename.
     :type command: str
     :param label: A short label. Goes into the export filename.
@@ -172,26 +171,28 @@ def execute(
             reddit.on_progress = None
             reddit.on_status = None
 
-    pretty_print(items=data)
+    __pretty_print(items=data)
 
     formats = [fmt.strip() for fmt in export_formats.split(",") if fmt.strip()]
     if not formats or not data:
         return
 
-    rows = data if isinstance(data, list) else [data]
+    rows: t.Sequence[t.Union[RedditObject, str]] = (
+        [data] if isinstance(data, RedditObject) else list(data)
+    )
     Path(EXPORT_DIR).mkdir(exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     base = str(Path(EXPORT_DIR) / f"{command}-{label}-{stamp}")
     with console.status(f"[dim]Exporting {command} {label}[/]…"):
         written = export.write(rows, base, formats)
     for path in written:
-        console.print(f"Wrote {path}")
+        console.log(f"Wrote {path}")
 
 
-def _cmd_post(args: argparse.Namespace, reddit: Reddit):
+def __cmd_post(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``post`` command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.post(args.id).about(),
         command="post",
@@ -201,10 +202,10 @@ def _cmd_post(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_post_comments(args: argparse.Namespace, reddit: Reddit):
+def __cmd_post_comments(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``post ID comments`` command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.post(args.id).comments(sort=args.sort, limit=args.limit, depth=args.depth),
         command="post",
@@ -214,10 +215,14 @@ def _cmd_post_comments(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_feed(args: argparse.Namespace, reddit: Reddit):
+def __cmd_feed(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``feed`` command."""
 
-    execute(
+    if args.stream:
+        __stream(reddit=reddit, name="")
+        return
+
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.subreddit("").posts(
             listing=args.listing, limit=args.limit, timeframe=args.timeframe
@@ -229,10 +234,10 @@ def _cmd_feed(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_subreddit(args: argparse.Namespace, reddit: Reddit):
+def __cmd_subreddit(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME`` profile command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.subreddit(args.name).about(),
         command="subreddit",
@@ -242,10 +247,39 @@ def _cmd_subreddit(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_subreddit_posts(args: argparse.Namespace, reddit: Reddit):
+def __stream(reddit: Reddit, name: str, kind: KINDS = "posts"):
+    """
+    Handle the ``--stream`` option on the ``posts``, ``comments``, and ``feed`` commands.
+
+    :param reddit: The Reddit handle to read through.
+    :type reddit: Reddit
+    :param name: The subreddit name, or ``""`` for the front page.
+    :type name: str
+    :param kind: Whether to stream posts or comments.
+    :type kind: KINDS
+    """
+
+    source = f"r/{name}" if name else "the front page"
+    console.log(f"Streaming new {kind} from {source}. Press [yellow]Ctrl+C[/] to stop.")
+    with console.status(f"[dim]Waiting for {kind}[/]…") as status:
+        def waiting(seconds: float):
+            status.update(
+                f"[dim]Waiting for {kind}[/]… [italic]checking again in[/] {seconds:.0f}s"
+            )
+
+        for thing in reddit.subreddit(name).stream(kind=kind, skip_existing=True, on_wait=waiting):
+            console.print()
+            __pretty_print(items=thing)
+
+
+def __cmd_subreddit_posts(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME posts`` command."""
 
-    execute(
+    if args.stream:
+        __stream(reddit=reddit, name=args.name)
+        return
+
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.subreddit(args.name).posts(
             listing=args.listing, limit=args.limit, timeframe=args.timeframe
@@ -257,10 +291,14 @@ def _cmd_subreddit_posts(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_subreddit_comments(args: argparse.Namespace, reddit: Reddit):
+def __cmd_subreddit_comments(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME comments`` command."""
 
-    execute(
+    if args.stream:
+        __stream(reddit=reddit, name=args.name, kind="comments")
+        return
+
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.subreddit(args.name).comments(limit=args.limit),
         command="subreddit",
@@ -270,10 +308,10 @@ def _cmd_subreddit_comments(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_subreddit_search(args: argparse.Namespace, reddit: Reddit):
+def __cmd_subreddit_search(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME search QUERY`` command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.subreddit(args.name).search(
             args.query,
@@ -288,19 +326,24 @@ def _cmd_subreddit_search(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_subreddit_wiki_pages(args: argparse.Namespace, reddit: Reddit):
+def __cmd_subreddit_wiki_pages(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddit NAME wiki-pages`` command."""
 
-    execute(reddit=reddit, thunk=lambda: reddit.subreddit(args.name).wiki_pages(), command="subreddit",
-            label="subreddit-wiki-pages", export_formats=args.export,
-            status_msg=f"Getting wiki pages for r/{args.name}")
+    __run_command(
+        reddit=reddit,
+        thunk=lambda: reddit.subreddit(args.name).wiki_pages(),
+        command="subreddit",
+        label=f"{args.name}-wiki-pages",
+        export_formats=args.export,
+        status_msg=f"Getting wiki pages for r/{args.name}",
+    )
 
 
-def _cmd_subreddits(args: argparse.Namespace, reddit: Reddit):
+def __cmd_subreddits(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``subreddits`` command."""
 
     kind = args.which
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: getattr(reddit.subreddits, kind)(limit=args.limit),
         command="subreddits",
@@ -310,10 +353,10 @@ def _cmd_subreddits(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_user(args: argparse.Namespace, reddit: Reddit):
+def __cmd_user(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME`` profile command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.user(args.username).about(),
         command="user",
@@ -323,10 +366,10 @@ def _cmd_user(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_user_posts(args: argparse.Namespace, reddit: Reddit):
+def __cmd_user_posts(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME posts`` command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.user(args.username).posts(
             listing=args.listing, limit=args.limit, timeframe=args.timeframe
@@ -338,10 +381,10 @@ def _cmd_user_posts(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_user_comments(args: argparse.Namespace, reddit: Reddit):
+def __cmd_user_comments(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME comments`` command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.user(args.username).comments(limit=args.limit, sort=args.sort),
         command="user",
@@ -351,10 +394,10 @@ def _cmd_user_comments(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_user_overview(args: argparse.Namespace, reddit: Reddit):
+def __cmd_user_overview(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME overview`` command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.user(args.username).overview(limit=args.limit),
         command="user",
@@ -364,10 +407,10 @@ def _cmd_user_overview(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_user_moderated(args: argparse.Namespace, reddit: Reddit):
+def __cmd_user_moderated(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME moderated`` command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.user(args.name).moderated(),
         command="user",
@@ -377,10 +420,10 @@ def _cmd_user_moderated(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_user_trophies(args: argparse.Namespace, reddit: Reddit):
+def __cmd_user_trophies(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``user NAME trophies`` command."""
 
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: reddit.user(args.name).trophies(),
         command="user",
@@ -390,11 +433,11 @@ def _cmd_user_trophies(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_users(args: argparse.Namespace, reddit: Reddit):
+def __cmd_users(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``users`` command."""
 
     kind = args.which
-    execute(
+    __run_command(
         reddit=reddit,
         thunk=lambda: getattr(reddit.users, kind)(limit=args.limit),
         command="users",
@@ -404,11 +447,11 @@ def _cmd_users(args: argparse.Namespace, reddit: Reddit):
     )
 
 
-def _cmd_search(args: argparse.Namespace, reddit: Reddit):
+def __cmd_search(args: argparse.Namespace, reddit: Reddit):
     """Handle the ``search`` command."""
 
     if args.kind == "subreddits":
-        execute(
+        __run_command(
             reddit=reddit,
             thunk=lambda: reddit.search.subreddits(args.query, limit=args.limit),
             command="search",
@@ -417,7 +460,7 @@ def _cmd_search(args: argparse.Namespace, reddit: Reddit):
             status_msg=f"Searching subreddits for '{args.query}'",
         )
     elif args.kind == "users":
-        execute(
+        __run_command(
             reddit=reddit,
             thunk=lambda: reddit.search.users(args.query, limit=args.limit),
             command="search",
@@ -426,7 +469,7 @@ def _cmd_search(args: argparse.Namespace, reddit: Reddit):
             status_msg=f"Searching users for '{args.query}'",
         )
     else:
-        execute(
+        __run_command(
             reddit=reddit,
             thunk=lambda: reddit.search.posts(
                 args.query, sort=args.sort, timeframe=args.timeframe, limit=args.limit
@@ -438,19 +481,19 @@ def _cmd_search(args: argparse.Namespace, reddit: Reddit):
         )
 
 
-def _cmd_license():
+def __cmd_license():
     """Handle the ``license`` conditions command."""
 
     console.print(License.conditions)
 
 
-def _cmd_license_warranty():
+def __cmd_license_warranty():
     """Handle the ``license warranty`` command."""
 
     console.print(License.warranty)
 
 
-def build_parser() -> argparse.ArgumentParser:
+def __build_parser() -> argparse.ArgumentParser:
     """
     Build the argument parser.
 
@@ -464,12 +507,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     post = subparsers.add_parser("post", help="a single post and its comments")
     post.add_argument("id", help="the post id")
-    _add_output(post)
-    post.set_defaults(func=_cmd_post)
+    __add_output(post)
+    post.set_defaults(func=__cmd_post)
     post_actions = post.add_subparsers(dest="post_action")
     post_comments = post_actions.add_parser("comments", help="get comments for the post")
-    _add_limit(post_comments)
-    _add_comment_sort(post_comments, "top")
+    __add_limit(post_comments)
+    __add_comment_sort(post_comments, "top")
     post_comments.add_argument(
         "-d",
         "--depth",
@@ -478,8 +521,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="how deep to load comments: 0 first batch only, 1 all top-level comments, "
              "higher also loads nested replies",
     )
-    _add_output(post_comments)
-    post_comments.set_defaults(func=_cmd_post_comments)
+    __add_output(post_comments)
+    post_comments.set_defaults(func=__cmd_post_comments)
 
     feed = subparsers.add_parser("feed", help="front-page post feeds")
     feed.add_argument(
@@ -489,43 +532,61 @@ def build_parser() -> argparse.ArgumentParser:
         default="hot",
         help="front-page listing to read",
     )
-    _add_limit(feed)
-    _add_timeframe(feed)
-    _add_output(feed)
-    feed.set_defaults(func=_cmd_feed)
+    feed.add_argument(
+        "--stream",
+        action="store_true",
+        help="print new posts as they appear until Ctrl+C, ignoring the listing, --limit, "
+             "--timeframe and --export",
+    )
+    __add_limit(feed)
+    __add_timeframe(feed)
+    __add_output(feed)
+    feed.set_defaults(func=__cmd_feed)
 
     subreddit = subparsers.add_parser("subreddit", help="data from one subreddit")
     subreddit.add_argument("name", help="the subreddit name")
-    _add_output(subreddit)
-    subreddit.set_defaults(func=_cmd_subreddit)
+    __add_output(subreddit)
+    subreddit.set_defaults(func=__cmd_subreddit)
     subreddit_actions = subreddit.add_subparsers(dest="subreddit_action")
 
     subreddit_profile = subreddit_actions.add_parser("profile", help="get the subreddit profile")
-    _add_output(subreddit_profile)
-    subreddit_profile.set_defaults(func=_cmd_subreddit)
+    __add_output(subreddit_profile)
+    subreddit_profile.set_defaults(func=__cmd_subreddit)
 
     subreddit_posts = subreddit_actions.add_parser("posts", help="get posts from the subreddit")
-    _add_feed_options(subreddit_posts)
-    subreddit_posts.set_defaults(func=_cmd_subreddit_posts)
+    subreddit_posts.add_argument(
+        "--stream",
+        action="store_true",
+        help="print new posts as they appear until Ctrl+C, ignoring --limit, --listing, "
+             "--timeframe and --export",
+    )
+    __add_feed_options(subreddit_posts)
+    subreddit_posts.set_defaults(func=__cmd_subreddit_posts)
 
     subreddit_comments = subreddit_actions.add_parser(
         "comments", help="get recent comments from the subreddit"
     )
-    _add_limit(subreddit_comments)
-    _add_output(subreddit_comments)
-    subreddit_comments.set_defaults(func=_cmd_subreddit_comments)
+    subreddit_comments.add_argument(
+        "--stream",
+        action="store_true",
+        help="print new comments as they appear until Ctrl+C, ignoring --limit and --export",
+    )
+    __add_limit(subreddit_comments)
+    __add_output(subreddit_comments)
+    subreddit_comments.set_defaults(func=__cmd_subreddit_comments)
 
     subreddit_search = subreddit_actions.add_parser(
         "search", help="search posts inside the subreddit"
     )
     subreddit_search.add_argument("query", help="the search text")
-    _add_search_options(subreddit_search)
-    subreddit_search.set_defaults(func=_cmd_subreddit_search)
+    __add_search_options(subreddit_search)
+    subreddit_search.set_defaults(func=__cmd_subreddit_search)
 
     subreddit_wiki_pages = subreddit_actions.add_parser(
         "wiki-pages", help="list wiki pages in the subreddit"
     )
-    subreddit_wiki_pages.set_defaults(func=_cmd_subreddit_wiki_pages)
+    __add_output(subreddit_wiki_pages)
+    subreddit_wiki_pages.set_defaults(func=__cmd_subreddit_wiki_pages)
 
     subreddits = subparsers.add_parser("subreddits", help="bulk subreddit feeds")
     subreddits.add_argument(
@@ -535,42 +596,42 @@ def build_parser() -> argparse.ArgumentParser:
         default="popular",
         help="which subreddit feed to read",
     )
-    _add_limit(subreddits)
-    _add_output(subreddits)
-    subreddits.set_defaults(func=_cmd_subreddits)
+    __add_limit(subreddits)
+    __add_output(subreddits)
+    subreddits.set_defaults(func=__cmd_subreddits)
 
     user = subparsers.add_parser("user", help="data about one user")
     user.add_argument("username", help="the user's name")
-    _add_output(user)
-    user.set_defaults(func=_cmd_user)
+    __add_output(user)
+    user.set_defaults(func=__cmd_user)
     user_actions = user.add_subparsers(dest="user_action")
 
     user_profile = user_actions.add_parser("profile", help="get the user profile")
-    _add_output(user_profile)
-    user_profile.set_defaults(func=_cmd_user)
+    __add_output(user_profile)
+    user_profile.set_defaults(func=__cmd_user)
 
     user_posts = user_actions.add_parser("posts", help="get posts submitted by the user")
-    _add_feed_options(user_posts)
-    user_posts.set_defaults(func=_cmd_user_posts)
+    __add_feed_options(user_posts)
+    user_posts.set_defaults(func=__cmd_user_posts)
 
     user_comments = user_actions.add_parser("comments", help="get comments by the user")
-    _add_limit(user_comments)
-    _add_comment_sort(user_comments, "new")
-    _add_output(user_comments)
-    user_comments.set_defaults(func=_cmd_user_comments)
+    __add_limit(user_comments)
+    __add_comment_sort(user_comments, "new")
+    __add_output(user_comments)
+    user_comments.set_defaults(func=__cmd_user_comments)
 
     user_overview = user_actions.add_parser("overview", help="get posts and comments by the user")
-    _add_limit(user_overview)
-    _add_output(user_overview)
-    user_overview.set_defaults(func=_cmd_user_overview)
+    __add_limit(user_overview)
+    __add_output(user_overview)
+    user_overview.set_defaults(func=__cmd_user_overview)
 
     user_moderated = user_actions.add_parser("moderated", help="get moderated subreddits")
-    _add_output(user_moderated)
-    user_moderated.set_defaults(func=_cmd_user_moderated)
+    __add_output(user_moderated)
+    user_moderated.set_defaults(func=__cmd_user_moderated)
 
     user_trophies = user_actions.add_parser("trophies", help="get user trophies")
-    _add_output(user_trophies)
-    user_trophies.set_defaults(func=_cmd_user_trophies)
+    __add_output(user_trophies)
+    user_trophies.set_defaults(func=__cmd_user_trophies)
 
     users = subparsers.add_parser("users", help="bulk user feeds")
     users.add_argument(
@@ -580,43 +641,43 @@ def build_parser() -> argparse.ArgumentParser:
         default="popular",
         help="which user feed to read",
     )
-    _add_limit(users)
-    _add_output(users)
-    users.set_defaults(func=_cmd_users)
+    __add_limit(users)
+    __add_output(users)
+    users.set_defaults(func=__cmd_users)
 
     search = subparsers.add_parser("search", help="search posts, subreddits, or users")
     search_actions = search.add_subparsers(dest="kind", required=True)
 
     search_posts = search_actions.add_parser("posts", help="search posts")
     search_posts.add_argument("query", help="the search text")
-    _add_search_options(search_posts)
-    search_posts.set_defaults(func=_cmd_search)
+    __add_search_options(search_posts)
+    search_posts.set_defaults(func=__cmd_search)
 
     search_subreddits = search_actions.add_parser("subreddits", help="search subreddits")
     search_subreddits.add_argument("query", help="the search text")
-    _add_limit(search_subreddits)
-    _add_output(search_subreddits)
-    search_subreddits.set_defaults(func=_cmd_search)
+    __add_limit(search_subreddits)
+    __add_output(search_subreddits)
+    search_subreddits.set_defaults(func=__cmd_search)
 
     search_users = search_actions.add_parser("users", help="search users")
     search_users.add_argument("query", help="the search text")
-    _add_limit(search_users)
-    _add_output(search_users)
-    search_users.set_defaults(func=_cmd_search)
+    __add_limit(search_users)
+    __add_output(search_users)
+    search_users.set_defaults(func=__cmd_search)
 
     lic = subparsers.add_parser("license", help="show the license")
     license_actions = lic.add_subparsers(dest="license_action", required=True)
 
     conditions = license_actions.add_parser("conditions", help="show the conditions")
-    conditions.set_defaults(func=_cmd_license)
+    conditions.set_defaults(func=__cmd_license)
 
     warranty = license_actions.add_parser("warranty", help="show the warranty")
-    warranty.set_defaults(func=_cmd_license_warranty)
+    warranty.set_defaults(func=__cmd_license_warranty)
 
     return parser
 
 
-def main(argv: t.Optional[t.Sequence[str]] = None):
+def run_cli(argv: t.Optional[t.Sequence[str]] = None):
     """
     Run the command line.
 
@@ -627,10 +688,10 @@ def main(argv: t.Optional[t.Sequence[str]] = None):
     :type argv: t.Optional[t.Sequence[str]]
     """
 
-    start = datetime.now(timezone.utc)
+    start_time = datetime.now(timezone.utc)
     console.set_window_title(title=f"{Project.name} v{Version.release}")
     try:
-        parser = build_parser()
+        parser = __build_parser()
         args = parser.parse_args(argv)
         if args.command == "license":
             args.func()
@@ -638,13 +699,13 @@ def main(argv: t.Optional[t.Sequence[str]] = None):
             with Reddit() as reddit:
                 args.func(args=args, reddit=reddit)
     except KeyboardInterrupt:
-        console.print("\nUser interruption detected([yellow]Ctrl+C[/])")
+        console.log("\nUser interruption detected ([yellow]Ctrl+C[/])")
     except Exception as e:
-        console.print(f"An error occurred: [red]{e}[/]")
+        console.log(f"An error occurred: [red]{e}[/]")
 
-    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-    console.print(f"Finished in {elapsed:.2f}s")
+    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+    console.log(f"Finished in {elapsed:.2f}s")
 
 
 if __name__ == "__main__":
-    main()
+    run_cli()

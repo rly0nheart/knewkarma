@@ -10,7 +10,7 @@ import json
 import typing as t
 from pathlib import Path
 
-from .core.models import RedditObject
+from ..core.models import RedditObject
 
 
 def _row(item: t.Union[RedditObject, str]) -> t.Dict[str, t.Any]:

@@ -7,7 +7,12 @@ The reads run through :meth:`Endpoint._get` and :meth:`Endpoint.paginate`; :clas
 sits behind them and supplies the session and token. Nothing here exposes them.
 """
 
+import random
+import time
 import typing as t
+from collections import OrderedDict
+
+import requests
 
 from .auth import RedditAuth
 from .models import (
@@ -24,15 +29,58 @@ from .models import (
 LISTINGS = t.Literal["controversial", "gilded", "hot", "new", "rising", "top"]
 TIME_FILTERS = t.Literal["all", "hour", "day", "week", "month", "year"]
 SORT = t.Literal["relevance", "hot", "top", "new", "comments"]
+KINDS = t.Literal["posts", "comments"]
 
 API_BASE = "https://oauth.reddit.com"
 STATUS_URL = "https://www.redditstatus.com/api/v2/status.json"
 PAGE_LIMIT = 100  # Reddit's per-request maximum.
 
+STREAM_DELAY = 1.0  # Seconds a stream waits after its first empty round.
+STREAM_MAX_DELAY = 16.0  # Longest a stream waits between rounds.
+STREAM_SPREAD = 30  # How many rounds a stream takes to walk its limit down and back.
+STREAM_TICK = 0.25  # How often a waiting stream reports the seconds left.
+
 # So :meth:`Reddit.__handle` returns the exact handle subclass it builds.
 Handle = t.TypeVar("Handle", bound="Endpoint")
 
 __all__ = ["Reddit", "API_BASE", "STATUS_URL", "PAGE_LIMIT", "SORT"]
+
+
+class SeenIds:
+    """A set of ids that drops its oldest once full. :meth:`SubredditEndpoint.stream` dedups on it."""
+
+    def __init__(self, capacity: int):
+        """
+        Set how many ids to hold.
+
+        :param capacity: How many ids to remember.
+        :type capacity: int
+        """
+
+        self.capacity = capacity
+        self.ids: "OrderedDict[str, None]" = OrderedDict()
+
+    def __contains__(self, thing_id: str) -> bool:
+        seen = thing_id in self.ids
+        if seen:
+            self.ids.move_to_end(thing_id)
+        return seen
+
+    def __len__(self) -> int:
+        return len(self.ids)
+
+    def add(self, thing_id: str):
+        """
+        Remember an id, dropping the oldest when full.
+
+        :param thing_id: The id to remember.
+        :type thing_id: str
+        """
+
+        self.ids[thing_id] = None
+        self.ids.move_to_end(thing_id)
+        while len(self.ids) > self.capacity:
+            self.ids.popitem(last=False)
 
 
 class Endpoint:
@@ -58,9 +106,10 @@ class Endpoint:
         """
         Send a GET to the API and return the parsed JSON.
 
-        On a 401 it mints a new token once and retries. A 404 returns None, so callers read a
-        missing user, subreddit, or post as None. Every other error status raises, so a rate limit,
-        an auth failure, or a server fault stops the run instead of looking like no results.
+        On a 401 it mints a new token once and retries. On a 429 it waits the delay Reddit names
+        and retries once. A 404 returns None, so callers read a missing user, subreddit, or post as
+        None. Every other error status raises, so a failure stops the run instead of looking like
+        no results.
 
         :param path: Path under ``oauth.reddit.com``, for example ``/r/pics/hot``.
         :type path: str
@@ -73,23 +122,46 @@ class Endpoint:
 
         url = f"{API_BASE}{path}"
         query = {"raw_json": 1, **(params or {})}  # raw_json=1 returns unescaped text
-        response = self.auth.session.get(
-            url,
-            params=query,
-            headers={"Authorization": f"bearer {self.auth.get_bearer_token()}"},
-            timeout=30,
-        )
+        response = self.send(url=url, query=query)
         if response.status_code == 401:
-            response = self.auth.session.get(
-                url,
-                params=query,
-                headers={"Authorization": f"bearer {self.auth.mint_token()}"},
-                timeout=30,
-            )
+            response = self.send(url=url, query=query, fresh_token=True)
+        if response.status_code == 429:
+            time.sleep(self.auth.rate_limit.pause(response.headers))
+            response = self.send(url=url, query=query)
         if response.status_code == 404:
             return None
         response.raise_for_status()
         return response.json()
+
+    def send(
+            self,
+            url: str,
+            query: t.Dict[str, t.Any],
+            fresh_token: bool = False,
+    ) -> requests.Response:
+        """
+        Wait for the rate limit, send one request, then feed its headers back to the rate limit.
+
+        :param url: The full URL.
+        :type url: str
+        :param query: Query parameters.
+        :type query: t.Dict[str, t.Any]
+        :param fresh_token: Whether to mint a new token instead of using the current one.
+        :type fresh_token: bool
+        :returns: The response, whatever its status.
+        :rtype: requests.Response
+        """
+
+        token = self.auth.mint_token() if fresh_token else self.auth.get_bearer_token()
+        self.auth.rate_limit.wait()
+        response = self.auth.session.get(
+            url,
+            params=query,
+            headers={"Authorization": f"bearer {token}"},
+            timeout=30,
+        )
+        self.auth.rate_limit.update(response.headers)
+        return response
 
     def paginate(
             self,
@@ -129,7 +201,7 @@ class Endpoint:
             if payload is None:
                 break
 
-            listing = Listing.from_response(payload)
+            listing = Listing.from_response(payload=payload)
             if not listing.children:
                 break
 
@@ -180,7 +252,7 @@ class UserEndpoint(Endpoint):
         payload = self.get(path=f"/user/{self.username}/about.json")
         if not payload or payload.get("kind") != "t2":
             return None
-        return User.from_data(payload.get("data", {}))
+        return User.from_data(data=payload.get("data", {}))
 
     def exists(self) -> bool:
         """
@@ -262,7 +334,7 @@ class UserEndpoint(Endpoint):
         payload = self.get(path=f"/user/{self.username}/moderated_subreddits.json")
         if payload is None:
             return []
-        return [Subreddit.from_data(item) for item in payload.get("data", [])]
+        return [Subreddit.from_data(data=item) for item in payload.get("data", [])]
 
     def trophies(self) -> t.List[Trophy]:
         """
@@ -276,7 +348,7 @@ class UserEndpoint(Endpoint):
         if payload is None:
             return []
         return [
-            Trophy.from_data(item.get("data", {}))
+            Trophy.from_data(data=item.get("data", {}))
             for item in payload.get("data", {}).get("trophies", [])
         ]
 
@@ -291,7 +363,7 @@ class UserEndpoint(Endpoint):
         payload = self.get(path=f"/api/multi/user/{self.username}")
         if payload is None:
             return []
-        return [MultiReddit.from_data(item.get("data", {})) for item in payload]
+        return [MultiReddit.from_data(data=item.get("data", {})) for item in payload]
 
 
 class SubredditEndpoint(Endpoint):
@@ -321,7 +393,7 @@ class SubredditEndpoint(Endpoint):
         payload = self.get(path=f"/r/{self.name}/about.json")
         if not payload or payload.get("kind") != "t5":
             return None
-        return Subreddit.from_data(payload.get("data", {}))
+        return Subreddit.from_data(data=payload.get("data", {}))
 
     def exists(self) -> bool:
         """
@@ -356,6 +428,86 @@ class SubredditEndpoint(Endpoint):
         params = {"t": timeframe} if listing in ("top", "controversial") else None
         things = self.paginate(path=f"{base}/{listing}", limit=limit, params=params)
         return [thing for thing in things if isinstance(thing, Post)]
+
+    def stream(
+            self,
+            kind: KINDS = "posts",
+            skip_existing: bool = False,
+            pause_after: t.Optional[int] = None,
+            on_wait: t.Optional[t.Callable[[float], None]] = None,
+    ) -> t.Iterator[t.Optional[Thing]]:
+        """
+        Yield new posts or comments as they appear, in the order they were made, until you leave
+        the loop.
+
+        :param kind: Whether to read the ``new`` listing or the subreddit's comments.
+        :type kind: KINDS
+        :param skip_existing: Whether to drop the things already there when the stream starts.
+        :type skip_existing: bool
+        :param pause_after: Yield None after this many quiet rounds, or None to never pause.
+        :type pause_after: t.Optional[int]
+        :param on_wait: Called with the seconds left before the next read, as the wait counts down.
+        :type on_wait: t.Optional[t.Callable[[float], None]]
+        :returns: The posts or comments, and None on a pause.
+        :rtype: t.Iterator[t.Optional[Thing]]
+        """
+
+        base = f"/r/{self.name}" if self.name else ""
+        path, model = (
+            (f"{base}/comments.json", Comment) if kind == "comments" else (f"{base}/new.json", Post)
+        )
+        seen = SeenIds(PAGE_LIMIT * 3)  # a few pages, so one busy round cannot flush it
+        delay = STREAM_DELAY
+        quiet_rounds = 0
+        spread = 0
+        before: t.Optional[str] = None
+        first_round = True
+
+        while True:
+            limit = PAGE_LIMIT
+            if before is None:
+                # Walk the limit down so Reddit cannot answer every round from one cached page.
+                limit -= spread
+                spread = (spread + 1) % STREAM_SPREAD
+
+            params: t.Dict[str, t.Any] = {"limit": limit}
+            if before is not None:
+                params["before"] = before  # only things newer than the last one handed out
+
+            payload = self.get(path=path, params=params)
+            children = Listing.from_response(payload=payload).children if payload else []
+
+            fresh: t.List[Thing] = []
+            for thing in children:
+                if not isinstance(thing, model) or thing.name in seen:
+                    continue
+                seen.add(thing.name)
+                fresh.append(thing)
+
+            before = fresh[0].name if fresh else None  # a quiet round drops back to a plain read
+            if first_round and skip_existing:
+                fresh = []  # they sit in `seen` now, so they will not come back
+            first_round = False
+
+            if fresh:
+                delay = STREAM_DELAY
+                quiet_rounds = 0
+                yield from reversed(fresh)
+                continue
+
+            quiet_rounds += 1
+            if pause_after is not None and quiet_rounds >= pause_after:
+                quiet_rounds = 0
+                yield None
+
+            wait = delay * random.uniform(0.97, 1.03)
+            while wait > 0:
+                if on_wait:
+                    on_wait(wait)
+                nap = min(STREAM_TICK, wait)
+                time.sleep(nap)
+                wait -= nap
+            delay = min(delay * 2, STREAM_MAX_DELAY)
 
     def comments(self, limit: t.Optional[int] = PAGE_LIMIT) -> t.List[Comment]:
         """
@@ -439,7 +591,7 @@ class PostEndpoint(Endpoint):
         payload = self.get(path=f"/comments/{self.id}.json", params={"limit": 1, "sort": sort})
         if payload is None:
             return None
-        listing = Listing.from_response(payload[0])
+        listing = Listing.from_response(payload=payload[0])
         posts = [thing for thing in listing.children if isinstance(thing, Post)]
         return posts[0] if posts else None
 
@@ -481,13 +633,13 @@ class PostEndpoint(Endpoint):
             return []
 
         raw_children = payload[1].get("data", {}).get("children", [])
-        expanded = self.__follow(raw_children, sort, depth, level=0)
-        listing = Listing.from_response({"data": {"children": expanded}})
+        expanded = self.follow_more_stubs(children=raw_children, sort=sort, depth=depth, level=0)
+        listing = Listing.from_response(payload={"data": {"children": expanded}})
         return [child for child in listing.children if isinstance(child, Comment)]
 
-    def __follow(
+    def follow_more_stubs(
             self,
-            raw_children: t.List[t.Dict[str, t.Any]],
+            children: t.List[t.Dict[str, t.Any]],
             sort: SORT,
             depth: t.Optional[int],
             level: int,
@@ -499,8 +651,8 @@ class PostEndpoint(Endpoint):
         into the tree where their stub sat. A stub at a level below ``depth`` is fetched and its
         comments take its place. A stub at or past ``depth`` stays as it is.
 
-        :param raw_children: The raw children of one listing.
-        :type raw_children: t.List[t.Dict[str, t.Any]]
+        :param children: The raw children of one listing.
+        :type children: t.List[t.Dict[str, t.Any]]
         :param sort: Comment sort.
         :type sort: SORT
         :param depth: How far to follow stubs, or None for all the way.
@@ -512,26 +664,29 @@ class PostEndpoint(Endpoint):
         """
 
         out: t.List[t.Dict[str, t.Any]] = []
-        for node in raw_children:
-            kind = node.get("kind")
+        for child in children:
+            kind = child.get("kind")
             if kind == "more":
                 if depth is None or level < depth:
-                    fetched = self.__fetch_more(node.get("data", {}), sort)
-                    out.extend(self.__follow(fetched, sort, depth, level))
+                    fetched = self.fetch_more_comments(more_data=child.get("data", {}), sort=sort)
+                    out.extend(self.follow_more_stubs(children=fetched, sort=sort, depth=depth, level=level))
                 else:
-                    out.append(node)
+                    out.append(child)
             elif kind == "t1":
-                replies = node.get("data", {}).get("replies")
+                replies = child.get("data", {}).get("replies")
                 if isinstance(replies, dict):
-                    node["data"]["replies"]["data"]["children"] = self.__follow(
-                        replies.get("data", {}).get("children", []), sort, depth, level + 1
-                    )
-                out.append(node)
+                    child["data"]["replies"]["data"]["children"] = self.follow_more_stubs(children=
+                                                                                          replies.get("data", {}).get(
+                                                                                              "children", []),
+                                                                                          sort=sort, depth=depth,
+                                                                                          level=level + 1
+                                                                                          )
+                out.append(child)
             else:
-                out.append(node)
+                out.append(child)
         return out
 
-    def __fetch_more(
+    def fetch_more_comments(
             self,
             more_data: t.Dict[str, t.Any],
             sort: SORT,
@@ -744,7 +899,7 @@ class UsersFeed(Endpoint):
 
         things = self.paginate(path="/users/popular", limit=limit)
         return [
-            User.from_profile_subreddit(thing.raw)
+            User.from_profile_subreddit(data=thing.raw)
             for thing in things
             if isinstance(thing, Subreddit)
         ]
@@ -763,7 +918,7 @@ class UsersFeed(Endpoint):
 
         things = self.paginate(path="/users/new", limit=limit)
         return [
-            User.from_profile_subreddit(thing.raw)
+            User.from_profile_subreddit(data=thing.raw)
             for thing in things
             if isinstance(thing, Subreddit)
         ]
@@ -798,7 +953,7 @@ class Reddit:
         self.__auth = RedditAuth(user_agent=user_agent)
         self.on_progress: t.Optional[t.Callable[[int, t.Optional[int]], None]] = None
 
-    def close(self) -> None:
+    def close(self):
         """Close the session. See :meth:`RedditAuth.close`."""
 
         self.__auth.close()
@@ -813,7 +968,7 @@ class Reddit:
 
         return self
 
-    def __exit__(self, *exc_info: t.Any) -> None:
+    def __exit__(self, *exc_info: t.Any):
         """Leave the context and close the session."""
 
         self.close()
@@ -846,7 +1001,7 @@ class Reddit:
         return self.__auth.on_status
 
     @on_status.setter
-    def on_status(self, callback: t.Optional[t.Callable[[str], None]]) -> None:
+    def on_status(self, callback: t.Optional[t.Callable[[str], None]]):
         self.__auth.on_status = callback
 
     @property
