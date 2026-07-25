@@ -12,36 +12,10 @@
     <li><i class="fa-solid fa-book"></i> <a href="{{ pathto('api') }}">Python API</a></li>
 </ul>
 
-{% if pagename == "api" %}
+{%- if pagename != "index" %}
 <h3>On this page</h3>
-<ul>
-    <li><a href="#users">Users</a></li>
-    <li><a href="#subreddits">Subreddits</a></li>
-    <li><a href="#search">Search</a></li>
-    <li><a href="#models">Models</a></li>
-</ul>
-{% elif pagename == "cli" %}
-<h3>On this page</h3>
-<ul>
-    <li><a href="#help">Help</a></li>
-    <li><a href="#posts">Posts</a></li>
-    <li><a href="#feeds">Feeds</a></li>
-    <li><a href="#search">Search</a></li>
-    <li><a href="#subreddit">Subreddit</a></li>
-    <li><a href="#subreddit-lists">Subreddit Lists</a></li>
-    <li><a href="#user">User</a></li>
-    <li><a href="#user-lists">User Lists</a></li>
-    <li><a href="#export">Export</a></li>
-    <li><a href="#license">License</a></li>
-</ul>
-{% elif pagename == "installation" %}
-<h3>On this page</h3>
-<ul>
-    <li><a href="#from-pypi">From PyPI</a></li>
-    <li><a href="#for-local-work">For local work</a></li>
-    <li><a href="#docker">Docker</a></li>
-</ul>
-{% endif %}
+{{ toc }}
+{%- endif %}
 
 <h3>Useful Links</h3>
 <ul>
