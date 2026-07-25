@@ -19,6 +19,8 @@ with Reddit(user_agent="MyKnewKarmaApp/1.0") as reddit:
 
 ## Users
 
+### About
+
 ```python
 user = reddit.user("spez").about()
 
@@ -27,6 +29,8 @@ print(user.total_karma)
 print(user.subreddit.display_name)
 ```
 
+### Comments
+
 ```python
 comments = reddit.user("spez").comments(limit=25)
 
@@ -34,7 +38,18 @@ for comment in comments:
     print(comment.body)
 ```
 
+### Posts
+
+```python
+posts = reddit.user("spez").posts(limit=25)
+
+for post in posts:
+    print(post.title)
+```
+
 ## Subreddits
+
+### About
 
 ```python
 subreddit = reddit.subreddit("python").about()
@@ -43,12 +58,16 @@ print(subreddit.display_name)
 print(subreddit.public_description)
 ```
 
+### Posts / Comments
+
 ```python
 posts = reddit.subreddit("python").posts(listing="top", timeframe="week", limit=10)
 
 for post in posts:
     print(post.title)
 ```
+
+#### Streaming
 
 Stream new posts as they appear, in the order they were posted:
 
@@ -57,17 +76,17 @@ for post in reddit.subreddit("python").stream(skip_existing=True):
     print(post.title)
 ```
 
-Comments stream the same way:
+Comments streaming works the same way:
 
 ```python
 for comment in reddit.subreddit("python").stream(kind="comments", skip_existing=True):
     print(comment.body)
 ```
 
-The stream runs until you leave the loop. `skip_existing` drops what is already there, so you only
-get posts or comments made from now on. `pause_after=N` yields `None` after N rounds bring nothing,
-so you can do other work. `on_wait` takes a function called with the seconds left before the next
-read.
+> The stream runs until you leave the loop. `skip_existing` drops what is already there, so you only
+> get posts or comments made from now on. `pause_after=N` yields `None` after N rounds bring nothing,
+> so you can do other work. `on_wait` takes a function called with the seconds left before the next
+> read.
 
 ## Search
 
