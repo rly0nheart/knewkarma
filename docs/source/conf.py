@@ -21,7 +21,7 @@ source_suffix = {
 }
 
 master_doc = "index"
-exclude_patterns = []
+exclude_patterns: list[str] = []
 templates_path = ["_templates"]
 
 html_theme = "alabaster"

@@ -35,6 +35,7 @@ knewkarma feed new
 knewkarma feed top --timeframe week
 knewkarma feed rising
 knewkarma feed controversial
+knewkarma feed --stream
 ```
 
 `knewkarma feed` means `hot`.
@@ -58,9 +59,14 @@ knewkarma subreddit SUBREDDIT posts --listing hot --limit 100
 knewkarma subreddit SUBREDDIT comments --limit 100
 knewkarma subreddit SUBREDDIT search QUERY --sort relevance --timeframe all
 knewkarma subreddit SUBREDDIT wiki-pages
+knewkarma subreddit SUBREDDIT posts --stream
+knewkarma subreddit SUBREDDIT comments --stream
 ```
 
 `knewkarma subreddit SUBREDDIT` means `profile`.
+
+`--stream` prints each new post or comment as it appears and runs until Ctrl+C. It ignores
+`--limit`, `--listing`, `--timeframe`, and `--export`.
 
 ## Subreddit Lists
 

@@ -1,6 +1,6 @@
 """Knew Karma: a Reddit data toolkit built on the anonymous API."""
 
-from .core.api import LISTINGS, SORT, TIME_FILTERS, Reddit
+from .core.api import KINDS, LISTINGS, SORT, TIME_FILTERS, Reddit
 from .core.models import (
     Comment,
     MultiReddit,
@@ -18,6 +18,7 @@ __all__ = [
     "Subreddit",
     "Trophy",
     "MultiReddit",
+    "KINDS",
     "LISTINGS",
     "SORT",
     "TIME_FILTERS",

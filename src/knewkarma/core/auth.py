@@ -4,7 +4,8 @@ Anonymous Reddit auth.
 :class:`RedditAuth` mints an app-only token with Reddit's ``installed_client`` grant and hands out
 a valid bearer token for reads over ``oauth.reddit.com``. It needs no account and no client secret.
 The default client id and user agent come from the RedReader app, whose anonymous flow this follows.
-The reads themselves live in :mod:`api`; this class only owns the session and the token.
+The reads themselves live in :mod:`api`; this class owns the session, the token, and the pacing
+that :class:`RateLimit` sets from Reddit's rate limit headers.
 """
 
 import json
@@ -18,6 +19,75 @@ import requests
 _TOKEN_MARGIN = 60  # Refresh this many seconds before expiry.
 _CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "knewkarma"
 _TOKEN_CACHE = _CACHE_DIR / "token.json"
+
+_WINDOW = 600  # Reddit's rate limit window, in seconds.
+_MAX_SPACING = 10  # Longest a request waits to spread itself over the window.
+_RETRY_AFTER = 5  # Seconds to wait after a 429 that names no delay.
+
+
+class RateLimit:
+    """Spreads requests over Reddit's rate limit window, from the headers it sends back."""
+
+    def __init__(self):
+        """Start with no reading. The first response fills one in."""
+
+        self.remaining: t.Optional[float] = None
+        self.used: float = 0.0
+        self.__next_request: float = 0.0
+
+    def wait(self):
+        """Sleep until the next request is due."""
+
+        nap = self.__next_request - time.monotonic()
+        if nap > 0:
+            time.sleep(nap)
+
+    def update(self, headers: t.Mapping[str, str]):
+        """
+        Read the rate limit headers and work out when the next request is due.
+
+        :param headers: The response headers.
+        :type headers: t.Mapping[str, str]
+        """
+
+        remaining = headers.get("x-ratelimit-remaining")
+        reset = headers.get("x-ratelimit-reset")
+        if remaining is None or reset is None:
+            if self.remaining is not None:  # no headers, so count the request off ourselves
+                self.remaining -= 1
+                self.used += 1
+            return
+
+        self.remaining = left = float(remaining)
+        self.used = float(headers.get("x-ratelimit-used") or 0)
+        to_reset = float(reset)
+        now = time.monotonic()
+
+        if left <= 0:
+            self.__next_request = now + to_reset
+            return
+
+        # Wait out the gap between the time left at an even pace and the time really left.
+        share = left + self.used
+        on_pace = _WINDOW - _WINDOW / share * self.used if share else 0.0
+        self.__next_request = now + min(to_reset, max(to_reset - on_pace, 0.0), _MAX_SPACING)
+
+    @staticmethod
+    def pause(headers: t.Mapping[str, str]) -> float:
+        """
+        Say how long to wait after a 429, from ``retry-after`` or the reset header.
+
+        :param headers: The response headers.
+        :type headers: t.Mapping[str, str]
+        :returns: The seconds to wait.
+        :rtype: float
+        """
+
+        delay = headers.get("retry-after") or headers.get("x-ratelimit-reset") or ""
+        try:
+            return max(float(delay), 0.0)
+        except ValueError:
+            return float(_RETRY_AFTER)
 
 
 class RedditAuth:
@@ -37,6 +107,7 @@ class RedditAuth:
         )
         self.session = requests.Session()
         self.session.headers["User-Agent"] = self.__user_agent
+        self.rate_limit = RateLimit()
         self.__token: str = ""
         self.__token_expiry: float = 0.0
         self.on_status: t.Optional[t.Callable[[str], None]] = None

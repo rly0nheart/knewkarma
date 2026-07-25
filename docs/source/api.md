@@ -50,6 +50,25 @@ for post in posts:
     print(post.title)
 ```
 
+Stream new posts as they appear, in the order they were posted:
+
+```python
+for post in reddit.subreddit("python").stream(skip_existing=True):
+    print(post.title)
+```
+
+Comments stream the same way:
+
+```python
+for comment in reddit.subreddit("python").stream(kind="comments", skip_existing=True):
+    print(comment.body)
+```
+
+The stream runs until you leave the loop. `skip_existing` drops what is already there, so you only
+get posts or comments made from now on. `pause_after=N` yields `None` after N rounds bring nothing,
+so you can do other work. `on_wait` takes a function called with the seconds left before the next
+read.
+
 ## Search
 
 ```python

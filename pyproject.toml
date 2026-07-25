@@ -1,6 +1,6 @@
 [project]
 name = "knewkarma"
-version = "9.0.1"
+version = "9.1.0"
 description = "Reddit-data analysis toolkit"
 authors = [{ name = "Ritchie Mwewa", email = "rly0nheart@duck.com" }]
 readme = "README.md"
@@ -26,7 +26,7 @@ repository = "https://codeberg.org/knewkarma/knewkarma"
 documentation = "https://knewkarma.readthedocs.io"
 
 [project.scripts]
-knewkarma = "knewkarma.cli:main"
+knewkarma = "knewkarma.cli.main:run_cli"
 
 [dependency-groups]
 dev = [
