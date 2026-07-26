@@ -7,10 +7,26 @@ carries all 100-plus fields the API sends, not a chosen few.
 
 Kinds: ``t1`` comment, ``t2`` user, ``t3`` post, ``t5`` subreddit, ``t6`` trophy, ``more`` (a
 stub naming comment ids to fetch), and ``Listing`` (a page with paging cursors).
+
+Every model, and the :class:`Things` list the API hands back, writes itself out:
+
+.. code-block:: python
+
+    from knewkarma import Reddit
+
+    with Reddit() as client:
+        posts = client.subreddit("askscience").posts(limit=10)
+
+        posts.to_csv("posts.csv")           # one row per post
+        posts[0].to_json("post.json")       # one object
+        posts[0].to_dict()                  # the fields as a plain dict
 """
 
+import csv
+import json
 import typing as t
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 class RedditObject:
@@ -87,6 +103,78 @@ class RedditObject:
 
         return self.data
 
+    @staticmethod
+    def __write(path: str, text: str) -> str:
+        """
+        Write text to a file, making the parent directory when it is missing.
+
+        :param path: Output file path.
+        :type path: str
+        :param text: What to write.
+        :type text: str
+        :returns: The path written.
+        :rtype: str
+        """
+
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        return str(target)
+
+    def to_dict(self) -> t.Dict[str, t.Any]:
+        """
+        Return the thing's fields as a plain dict.
+
+        The dict is a shallow copy, so changing it leaves the model alone.
+
+        :returns: Every field the API sent.
+        :rtype: t.Dict[str, t.Any]
+        """
+
+        return dict(self.data)
+
+    def to_json(self, path: str, indent: int = 2) -> str:
+        """
+        Write the thing to a json file as one object.
+
+        .. code-block:: python
+
+            from knewkarma import Reddit
+
+            with Reddit() as client:
+                client.user("spez").posts(limit=5)[0].to_json("post.json")
+
+        :param path: Output file path. Missing parent directories are made.
+        :type path: str
+        :param indent: Spaces to indent by. ``0`` writes it on one line.
+        :type indent: int
+        :returns: The path written.
+        :rtype: str
+        """
+
+        return self.__write(
+            path, json.dumps(self.to_dict(), indent=indent or None, ensure_ascii=False)
+        )
+
+    def to_csv(self, path: str) -> str:
+        """
+        Write the thing to a csv file as one row.
+
+        .. code-block:: python
+
+            from knewkarma import Reddit
+
+            with Reddit() as client:
+                client.user("spez").posts(limit=5)[0].to_csv("post.csv")
+
+        :param path: Output file path. Missing parent directories are made.
+        :type path: str
+        :returns: The path written.
+        :rtype: str
+        """
+
+        return Things([self]).to_csv(path)
+
 
 class Post(RedditObject):
     """A Reddit post, kind ``t3``."""
@@ -137,6 +225,134 @@ class More(RedditObject):
 
 # A parsed thing is any one of the models above.
 Thing = t.Union[Post, Comment, More, Subreddit, User, Trophy]
+
+
+class Things[T](list[T]):
+    """
+    The list of things a read hands back. It writes itself out the way one thing does.
+
+    It is a plain list, so it indexes, slices and iterates as always. It just also carries
+    :meth:`to_dict`, :meth:`to_json` and :meth:`to_csv`:
+
+    .. code-block:: python
+
+        from knewkarma import Reddit
+
+        with Reddit() as client:
+            posts = client.subreddit("python").posts(limit=50)
+            posts.to_csv("posts.csv")
+            posts[0].to_json("first.json")
+    """
+
+    @staticmethod
+    def __as_row(item: t.Any) -> t.Dict[str, t.Any]:
+        """
+        Turn one item into a flat row.
+
+        :param item: A model, or a plain value such as a wiki page name.
+        :type item: t.Any
+        :returns: The item's fields, or ``{"value": item}`` for a plain value.
+        :rtype: t.Dict[str, t.Any]
+        """
+
+        if isinstance(item, RedditObject):
+            return item.to_dict()
+        return {"value": item}
+
+    @staticmethod
+    def __as_cell(value: t.Any) -> t.Any:
+        """
+        Make one value fit in a csv cell.
+
+        Reddit nests dicts and lists inside a thing's fields. A csv cell holds text, so those go in
+        as json rather than as a Python repr, which keeps them readable by whatever opens the file
+        next.
+
+        :param value: A field value.
+        :type value: t.Any
+        :returns: The value, or its json form when it nests.
+        :rtype: t.Any
+        """
+
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return value
+
+    @staticmethod
+    def __prepare(path: str) -> Path:
+        """
+        Make the parent directory of an output path when it is missing.
+
+        :param path: Output file path.
+        :type path: str
+        :returns: The path, ready to write to.
+        :rtype: Path
+        """
+
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def to_dict(self) -> t.List[t.Dict[str, t.Any]]:
+        """
+        Return the things as a list of plain dicts.
+
+        :returns: One dict of fields per thing.
+        :rtype: t.List[t.Dict[str, t.Any]]
+        """
+
+        return [self.__as_row(item) for item in self]
+
+    def to_json(self, path: str, indent: int = 2) -> str:
+        """
+        Write the things to a json file as one array.
+
+        :param path: Output file path. Missing parent directories are made.
+        :type path: str
+        :param indent: Spaces to indent by. ``0`` writes it on one line.
+        :type indent: int
+        :returns: The path written.
+        :rtype: str
+        """
+
+        target = self.__prepare(path)
+        target.write_text(
+            json.dumps(self.to_dict(), indent=indent or None, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return str(target)
+
+    def to_csv(self, path: str) -> str:
+        """
+        Write the things to a csv file, one row each.
+
+        The columns are the union of every row's keys, in the order they were first seen, since
+        things of the same kind can still carry different fields.
+
+        :param path: Output file path. Missing parent directories are made.
+        :type path: str
+        :returns: The path written.
+        :rtype: str
+        """
+
+        target = self.__prepare(path)
+        rows = self.to_dict()
+
+        fieldnames: t.List[str] = []
+        seen: t.Set[str] = set()
+        for row in rows:
+            for key in row:
+                if key not in seen:
+                    seen.add(key)
+                    fieldnames.append(key)
+
+        with target.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: self.__as_cell(value) for key, value in row.items()})
+        return str(target)
+
 
 _BUILDERS: t.Dict[str, t.Callable[[t.Dict[str, t.Any]], Thing]] = {
     "t1": Comment.from_data,

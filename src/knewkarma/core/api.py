@@ -3,8 +3,11 @@ The grouped Reddit API.
 
 :class:`Reddit` is the one entry point. It hands out small handles, one per Reddit entity, and a
 few collections for search and bulk feeds. Each handle method runs one read and returns models.
-The reads run through :meth:`Endpoint._get` and :meth:`Endpoint.paginate`; :class:`RedditAuth`
+The reads run through :meth:`Endpoint.get` and :meth:`Endpoint.paginate`; :class:`RedditAuth`
 sits behind them and supplies the session and token. Nothing here exposes them.
+
+A read that returns many things returns a :class:`~knewkarma.core.models.Things` list, which is a
+plain list that can also write itself to json or csv.
 """
 
 import random
@@ -22,6 +25,7 @@ from .models import (
     Post,
     Subreddit,
     Thing,
+    Things,
     Trophy,
     User,
 )
@@ -34,6 +38,8 @@ KINDS = t.Literal["posts", "comments"]
 API_BASE = "https://oauth.reddit.com"
 STATUS_URL = "https://www.redditstatus.com/api/v2/status.json"
 PAGE_LIMIT = 100  # Reddit's per-request maximum.
+MORE_CHILDREN_LIMIT = 100  # Most comment ids one bulk "load more" read takes.
+MORE_REQUEST_BUDGET = 256  # Most requests one comment read spends following "load more" stubs.
 
 STREAM_DELAY = 1.0  # Seconds a stream waits after its first empty round.
 STREAM_MAX_DELAY = 16.0  # Longest a stream waits between rounds.
@@ -43,7 +49,7 @@ STREAM_TICK = 0.25  # How often a waiting stream reports the seconds left.
 # So :meth:`Reddit.__handle` returns the exact handle subclass it builds.
 Handle = t.TypeVar("Handle", bound="Endpoint")
 
-__all__ = ["Reddit", "API_BASE", "STATUS_URL", "PAGE_LIMIT", "SORT"]
+__all__ = ["Reddit", "API_BASE", "STATUS_URL", "PAGE_LIMIT", "SORT", "UserEndpoint", "SubredditEndpoint"]
 
 
 class SeenIds:
@@ -83,12 +89,47 @@ class SeenIds:
             self.ids.popitem(last=False)
 
 
+class Budget:
+    """
+    How many more requests a comment walk may spend.
+
+    :meth:`PostEndpoint.comments` sets one and the walk spends it. Without it a wide thread can
+    hand back fresh stubs faster than they are followed, and the walk never ends on its own.
+    """
+
+    def __init__(self, limit: t.Optional[int]):
+        """
+        Set how many requests may be spent.
+
+        :param limit: How many requests to allow, or None for no limit.
+        :type limit: t.Optional[int]
+        """
+
+        self.left = limit
+
+    def is_spent(self) -> bool:
+        """
+        Say whether the budget is gone. Ask before spending.
+
+        :returns: True when nothing is left, so no more requests should go out.
+        :rtype: bool
+        """
+
+        return self.left is not None and self.left <= 0
+
+    def spend(self):
+        """Take one request from the budget."""
+
+        if self.left is not None:
+            self.left -= 1
+
+
 class Endpoint:
     """
     Base for the handles.
 
     It holds the shared :class:`RedditAuth` and the two read primitives every handle needs:
-    :meth:`_get` for one request and :meth:`paginate` for a listing walk.
+    :meth:`get` for one request and :meth:`paginate` for a listing walk.
     """
 
     def __init__(self, auth: RedditAuth):
@@ -126,7 +167,7 @@ class Endpoint:
         if response.status_code == 401:
             response = self.send(url=url, query=query, fresh_token=True)
         if response.status_code == 429:
-            time.sleep(self.auth.rate_limit.pause(response.headers))
+            self.auth.rate_limit.back_off(response.headers)
             response = self.send(url=url, query=query)
         if response.status_code == 404:
             return None
@@ -168,7 +209,7 @@ class Endpoint:
             path: str,
             limit: t.Optional[int],
             params: t.Optional[t.Dict[str, t.Any]] = None,
-    ) -> t.List[Thing]:
+    ) -> Things[Thing]:
         """
         Walk a listing across pages and return its things.
 
@@ -183,10 +224,10 @@ class Endpoint:
         :param params: Extra query parameters, such as ``sort`` or ``t``.
         :type params: t.Optional[t.Dict[str, t.Any]]
         :returns: The collected things, in order.
-        :rtype: t.List[Thing]
+        :rtype: Things[Thing]
         """
 
-        collected: t.List[Thing] = []
+        collected: Things[Thing] = Things()
         seen: t.Set[str] = set()
         after: t.Optional[str] = None
         query = dict(params or {})
@@ -273,7 +314,7 @@ class UserEndpoint(Endpoint):
             listing: LISTINGS = "new",
             limit: t.Optional[int] = PAGE_LIMIT,
             timeframe: TIME_FILTERS = "all",
-    ) -> t.List[Post]:
+    ) -> Things[Post]:
         """
         Get the user's submitted posts.
 
@@ -284,18 +325,18 @@ class UserEndpoint(Endpoint):
         :param timeframe: Time window for ``top`` and ``controversial``.
         :type timeframe: TIME_FILTERS
         :returns: The posts.
-        :rtype: t.List[Post]
+        :rtype: Things[Post]
         """
 
         params = {"sort": listing, "t": timeframe}
         things = self.paginate(path=f"/user/{self.username}/submitted", limit=limit, params=params)
-        return [thing for thing in things if isinstance(thing, Post)]
+        return Things(thing for thing in things if isinstance(thing, Post))
 
     def comments(
             self,
             limit: t.Optional[int] = PAGE_LIMIT,
             sort: SORT = "new",
-    ) -> t.List[Comment]:
+    ) -> Things[Comment]:
         """
         Get the user's comments.
 
@@ -304,66 +345,66 @@ class UserEndpoint(Endpoint):
         :param sort: Sort of the comments.
         :type sort: SORT
         :returns: The comments.
-        :rtype: t.List[Comment]
+        :rtype: Things[Comment]
         """
 
         params = {"sort": sort}
         things = self.paginate(path=f"/user/{self.username}/comments", limit=limit, params=params)
-        return [thing for thing in things if isinstance(thing, Comment)]
+        return Things(thing for thing in things if isinstance(thing, Comment))
 
-    def overview(self, limit: t.Optional[int] = PAGE_LIMIT) -> t.List[Thing]:
+    def overview(self, limit: t.Optional[int] = PAGE_LIMIT) -> Things[Thing]:
         """
         Get the user's posts and comments together, newest first.
 
         :param limit: Most items to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The posts and comments.
-        :rtype: t.List[Thing]
+        :rtype: Things[Thing]
         """
 
         return self.paginate(path=f"/user/{self.username}/overview", limit=limit)
 
-    def moderated(self) -> t.List[Subreddit]:
+    def moderated(self) -> Things[Subreddit]:
         """
         List the subreddits the user moderates.
 
         :returns: The moderated subreddits.
-        :rtype: t.List[Subreddit]
+        :rtype: Things[Subreddit]
         """
 
         payload = self.get(path=f"/user/{self.username}/moderated_subreddits.json")
         if payload is None:
-            return []
-        return [Subreddit.from_data(data=item) for item in payload.get("data", [])]
+            return Things()
+        return Things(Subreddit.from_data(data=item) for item in payload.get("data", []))
 
-    def trophies(self) -> t.List[Trophy]:
+    def trophies(self) -> Things[Trophy]:
         """
         Get the user's trophies.
 
         :returns: The trophies.
-        :rtype: t.List[Trophy]
+        :rtype: Things[Trophy]
         """
 
         payload = self.get(path=f"/user/{self.username}/trophies.json")
         if payload is None:
-            return []
-        return [
+            return Things()
+        return Things(
             Trophy.from_data(data=item.get("data", {}))
             for item in payload.get("data", {}).get("trophies", [])
-        ]
+        )
 
-    def multireddits(self) -> t.List[MultiReddit]:
+    def multireddits(self) -> Things[MultiReddit]:
         """
         List the user's public multireddits.
 
         :returns: The multireddits.
-        :rtype: t.List[MultiReddit]
+        :rtype: Things[MultiReddit]
         """
 
         payload = self.get(path=f"/api/multi/user/{self.username}")
         if payload is None:
-            return []
-        return [MultiReddit.from_data(data=item.get("data", {})) for item in payload]
+            return Things()
+        return Things(MultiReddit.from_data(data=item.get("data", {})) for item in payload)
 
 
 class SubredditEndpoint(Endpoint):
@@ -410,7 +451,7 @@ class SubredditEndpoint(Endpoint):
             listing: LISTINGS = "hot",
             limit: t.Optional[int] = PAGE_LIMIT,
             timeframe: TIME_FILTERS = "all",
-    ) -> t.List[Post]:
+    ) -> Things[Post]:
         """
         Get posts from the subreddit.
 
@@ -421,13 +462,13 @@ class SubredditEndpoint(Endpoint):
         :param timeframe: Time window for ``top`` and ``controversial``.
         :type timeframe: TIME_FILTERS
         :returns: The posts.
-        :rtype: t.List[Post]
+        :rtype: Things[Post]
         """
 
         base = f"/r/{self.name}" if self.name else ""
         params = {"t": timeframe} if listing in ("top", "controversial") else None
         things = self.paginate(path=f"{base}/{listing}", limit=limit, params=params)
-        return [thing for thing in things if isinstance(thing, Post)]
+        return Things(thing for thing in things if isinstance(thing, Post))
 
     def stream(
             self,
@@ -509,18 +550,19 @@ class SubredditEndpoint(Endpoint):
                 wait -= nap
             delay = min(delay * 2, STREAM_MAX_DELAY)
 
-    def comments(self, limit: t.Optional[int] = PAGE_LIMIT) -> t.List[Comment]:
+    def comments(self, limit: t.Optional[int] = PAGE_LIMIT) -> Things[Comment]:
         """
         Get the subreddit's recent comments.
 
         :param limit: Most comments to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The recent comments.
-        :rtype: t.List[Comment]
+        :rtype: Things[Comment]
         """
 
-        things = self.paginate(path=f"/r/{self.name}/comments", limit=limit)
-        return [thing for thing in things if isinstance(thing, Comment)]
+        base = f"/r/{self.name}" if self.name else ""
+        things = self.paginate(path=f"{base}/comments", limit=limit)
+        return Things(thing for thing in things if isinstance(thing, Comment))
 
     def search(
             self,
@@ -528,7 +570,7 @@ class SubredditEndpoint(Endpoint):
             sort: SORT = "relevance",
             timeframe: TIME_FILTERS = "all",
             limit: t.Optional[int] = PAGE_LIMIT,
-    ) -> t.List[Post]:
+    ) -> Things[Post]:
         """
         Search posts inside the subreddit.
 
@@ -541,25 +583,26 @@ class SubredditEndpoint(Endpoint):
         :param limit: Most posts to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The matching posts.
-        :rtype: t.List[Post]
+        :rtype: Things[Post]
         """
 
+        base = f"/r/{self.name}" if self.name else ""
         params = {"q": query, "restrict_sr": "on", "sort": sort, "t": timeframe}
-        things = self.paginate(path=f"/r/{self.name}/search", limit=limit, params=params)
-        return [thing for thing in things if isinstance(thing, Post)]
+        things = self.paginate(path=f"{base}/search", limit=limit, params=params)
+        return Things(thing for thing in things if isinstance(thing, Post))
 
-    def wiki_pages(self) -> t.List[str]:
+    def wiki_pages(self) -> Things[str]:
         """
         List the subreddit's wiki page names.
 
         :returns: The wiki page names.
-        :rtype: t.List[str]
+        :rtype: Things[str]
         """
 
         payload = self.get(path=f"/r/{self.name}/wiki/pages.json")
         if payload is None:
-            return []
-        return list(payload.get("data", []))
+            return Things()
+        return Things(payload.get("data", []))
 
 
 class PostEndpoint(Endpoint):
@@ -600,7 +643,8 @@ class PostEndpoint(Endpoint):
             sort: SORT = "top",
             limit: t.Optional[int] = PAGE_LIMIT,
             depth: t.Optional[int] = 1,
-    ) -> t.List[Comment]:
+            budget: t.Optional[int] = MORE_REQUEST_BUDGET,
+    ) -> Things[Comment]:
         """
         Get the post's comments.
 
@@ -612,8 +656,10 @@ class PostEndpoint(Endpoint):
         - ``n`` also follows stubs down to reply level ``n``.
         - ``None`` follows every stub until the tree runs out.
 
-        Each stub costs one request per child id. A busy thread holds thousands of ids, so a high
-        ``depth`` can fire thousands of requests. Keep ``depth`` low, or raise it when you must.
+        Stubs are read in bulk, a hundred ids a request. A wide thread still hands back fresh stubs
+        as it goes, so ``budget`` caps what one read may spend. Once it runs out the stubs left are
+        handed back as they are, the same as a stub past ``depth``, so you can see what was not
+        followed.
 
         :param sort: Comment sort.
         :type sort: SORT
@@ -621,8 +667,10 @@ class PostEndpoint(Endpoint):
         :type limit: t.Optional[int]
         :param depth: How far to follow ``load more`` stubs. See above.
         :type depth: t.Optional[int]
+        :param budget: Most requests to spend following stubs, or None for no cap.
+        :type budget: t.Optional[int]
         :returns: The comments, each with its nested replies.
-        :rtype: t.List[Comment]
+        :rtype: Things[Comment]
         """
 
         params: t.Dict[str, t.Any] = {"sort": sort}
@@ -630,12 +678,14 @@ class PostEndpoint(Endpoint):
             params["limit"] = limit
         payload = self.get(path=f"/comments/{self.id}.json", params=params)
         if payload is None:
-            return []
+            return Things()
 
         raw_children = payload[1].get("data", {}).get("children", [])
-        expanded = self.follow_more_stubs(children=raw_children, sort=sort, depth=depth, level=0)
+        expanded = self.follow_more_stubs(
+            children=raw_children, sort=sort, depth=depth, level=0, budget=Budget(budget)
+        )
         listing = Listing.from_response(payload={"data": {"children": expanded}})
-        return [child for child in listing.children if isinstance(child, Comment)]
+        return Things(child for child in listing.children if isinstance(child, Comment))
 
     def follow_more_stubs(
             self,
@@ -643,6 +693,8 @@ class PostEndpoint(Endpoint):
             sort: SORT,
             depth: t.Optional[int],
             level: int,
+            seen: t.Optional[t.Set[t.Tuple[t.Any, ...]]] = None,
+            budget: t.Optional[Budget] = None,
     ) -> t.List[t.Dict[str, t.Any]]:
         """
         Walk a raw comment listing and follow ``load more`` stubs up to ``depth``.
@@ -650,6 +702,14 @@ class PostEndpoint(Endpoint):
         This works on Reddit's raw ``{kind, data}`` dicts so it can splice fetched comments back
         into the tree where their stub sat. A stub at a level below ``depth`` is fetched and its
         comments take its place. A stub at or past ``depth`` stays as it is.
+
+        A fetched stub stands for siblings, not replies, so following one keeps the same ``level``.
+        That means ``depth`` alone cannot end a run of stubs at one level, so each stub followed is
+        remembered and never followed twice. A stub that resolves to itself is left in place on the
+        second sighting instead of being chased again.
+
+        The listing handed in is left as it was. A comment whose replies change is copied rather
+        than written through, so the caller's payload still reads the way it arrived.
 
         :param children: The raw children of one listing.
         :type children: t.List[t.Dict[str, t.Any]]
@@ -659,28 +719,57 @@ class PostEndpoint(Endpoint):
         :type depth: t.Optional[int]
         :param level: The nesting level of these children. The top level is 0.
         :type level: int
-        :returns: The children with stubs followed where ``depth`` allows.
+        :param seen: Stubs already followed on this walk. Starts empty.
+        :type seen: t.Optional[t.Set[t.Tuple[t.Any, ...]]]
+        :param budget: What the walk may still spend. None lets it run as far as the tree goes.
+        :type budget: t.Optional[Budget]
+        :returns: The children with stubs followed where ``depth`` and ``budget`` allow.
         :rtype: t.List[t.Dict[str, t.Any]]
         """
 
+        seen = set() if seen is None else seen
+        budget = Budget(None) if budget is None else budget
         out: t.List[t.Dict[str, t.Any]] = []
         for child in children:
             kind = child.get("kind")
             if kind == "more":
-                if depth is None or level < depth:
-                    fetched = self.fetch_more_comments(more_data=child.get("data", {}), sort=sort)
-                    out.extend(self.follow_more_stubs(children=fetched, sort=sort, depth=depth, level=level))
+                data = child.get("data", {})
+                # What makes one stub distinct: a "continue this thread" stub carries no children
+                # and a shared id, so the parent it points at is part of the identity.
+                key = (data.get("name"), data.get("parent_id"), tuple(data.get("children") or ()))
+                if (depth is None or level < depth) and key not in seen and not budget.is_spent():
+                    seen.add(key)
+                    fetched = self.fetch_more_comments(more_data=data, sort=sort, budget=budget)
+                    out.extend(
+                        self.follow_more_stubs(
+                            children=fetched, sort=sort, depth=depth, level=level,
+                            seen=seen, budget=budget,
+                        )
+                    )
                 else:
                     out.append(child)
             elif kind == "t1":
                 replies = child.get("data", {}).get("replies")
                 if isinstance(replies, dict):
-                    child["data"]["replies"]["data"]["children"] = self.follow_more_stubs(children=
-                                                                                          replies.get("data", {}).get(
-                                                                                              "children", []),
-                                                                                          sort=sort, depth=depth,
-                                                                                          level=level + 1
-                                                                                          )
+                    followed = self.follow_more_stubs(
+                        children=replies.get("data", {}).get("children", []),
+                        sort=sort,
+                        depth=depth,
+                        level=level + 1,
+                        seen=seen,
+                        budget=budget,
+                    )
+                    # Copy down to the one list that changed, so the caller's dicts stay put.
+                    child = {
+                        **child,
+                        "data": {
+                            **child["data"],
+                            "replies": {
+                                **replies,
+                                "data": {**replies.get("data", {}), "children": followed},
+                            },
+                        },
+                    }
                 out.append(child)
             else:
                 out.append(child)
@@ -690,35 +779,105 @@ class PostEndpoint(Endpoint):
             self,
             more_data: t.Dict[str, t.Any],
             sort: SORT,
+            budget: t.Optional[Budget] = None,
     ) -> t.List[t.Dict[str, t.Any]]:
         """
         Fetch the raw comments behind one ``load more`` stub.
 
-        The stub names child ids to fetch, one request each. A "continue this thread" stub names no
-        children, so this follows its ``parent_id`` instead.
+        The stub names the child ids it stands for. Those go to Reddit's bulk endpoint,
+        ``MORE_CHILDREN_LIMIT`` at a time, so a stub naming thousands of ids costs one request per
+        hundred rather than one per id. A "continue this thread" stub names no children, so this
+        reads its ``parent_id`` on its own instead.
+
+        The bulk endpoint answers with a flat list: a reply arrives beside its parent rather than
+        inside it. :meth:`nest_flat_comments` puts it back before the result is handed on, so the
+        tree here reads the same as one read a comment at a time.
 
         :param more_data: The stub's ``data`` body.
         :type more_data: t.Dict[str, t.Any]
         :param sort: Comment sort.
         :type sort: SORT
-        :returns: The raw child dicts the stub stood for.
+        :param budget: What the walk may still spend. Reads stop once it runs out, so a stub wider
+            than the budget comes back part read rather than not at all.
+        :type budget: t.Optional[Budget]
+        :returns: The raw child dicts the stub stood for, nested.
         :rtype: t.List[t.Dict[str, t.Any]]
         """
 
-        ids = more_data.get("children") or (
-            [more_data["parent_id"]] if more_data.get("parent_id") else []
-        )
-        raw: t.List[t.Dict[str, t.Any]] = []
-        for child_id in ids:
-            bare = child_id.split("_")[-1]
+        budget = Budget(None) if budget is None else budget
+        ids = [child_id.split("_")[-1] for child_id in more_data.get("children") or []]
+        if not ids:
+            parent = more_data.get("parent_id")
+            if not parent or budget.is_spent():
+                return []
+            budget.spend()
             payload = self.get(
-                path=f"/comments/{self.id}/comment/{bare}.json",
+                path=f"/comments/{self.id}/comment/{parent.split('_')[-1]}.json",
                 params={"sort": sort, "context": 0},
             )
             if payload is None:
+                return []
+            return list(payload[1].get("data", {}).get("children", []))
+
+        flat: t.List[t.Dict[str, t.Any]] = []
+        for start in range(0, len(ids), MORE_CHILDREN_LIMIT):
+            if budget.is_spent():
+                break
+            budget.spend()
+            payload = self.get(
+                path="/api/morechildren",
+                params={
+                    "link_id": f"t3_{self.id}",
+                    "children": ",".join(ids[start:start + MORE_CHILDREN_LIMIT]),
+                    "sort": sort,
+                    "api_type": "json",
+                },
+            )
+            # This endpoint reports trouble in the body with a 200, so raise_for_status sees none.
+            if payload is None or payload.get("json", {}).get("errors"):
                 continue
-            raw.extend(payload[1].get("data", {}).get("children", []))
-        return raw
+            flat.extend(payload.get("json", {}).get("data", {}).get("things", []))
+
+        return self.nest_flat_comments(things=flat)
+
+    @staticmethod
+    def nest_flat_comments(things: t.List[t.Dict[str, t.Any]]) -> t.List[t.Dict[str, t.Any]]:
+        """
+        Rebuild a comment tree from the flat list the bulk endpoint returns.
+
+        Every thing carries a ``parent_id``. One whose parent is also in the list belongs inside
+        that parent's ``replies``; the rest are the roots this stub stood for. Order is kept, so
+        the sort Reddit applied survives.
+
+        The things are fetched fresh and owned here, so they are nested in place.
+
+        :param things: The flat ``{kind, data}`` things from one or more bulk reads.
+        :type things: t.List[t.Dict[str, t.Any]]
+        :returns: The roots, each with its replies nested inside it.
+        :rtype: t.List[t.Dict[str, t.Any]]
+        """
+
+        by_id = {
+            thing["data"]["id"]: thing
+            for thing in things
+            if thing.get("kind") == "t1" and thing.get("data", {}).get("id")
+        }
+
+        roots: t.List[t.Dict[str, t.Any]] = []
+        for thing in things:
+            parent = thing.get("data", {}).get("parent_id") or ""
+            host = by_id.get(parent.split("_")[-1])
+            if host is None or host is thing:
+                roots.append(thing)
+                continue
+
+            replies = host["data"].get("replies")
+            if not isinstance(replies, dict):
+                replies = {"kind": "Listing", "data": {"children": []}}
+                host["data"]["replies"] = replies
+            replies.setdefault("data", {}).setdefault("children", []).append(thing)
+
+        return roots
 
 
 class MultiRedditEndpoint(Endpoint):
@@ -745,7 +904,7 @@ class MultiRedditEndpoint(Endpoint):
             listing: LISTINGS = "hot",
             limit: t.Optional[int] = PAGE_LIMIT,
             timeframe: TIME_FILTERS = "all",
-    ) -> t.List[Post]:
+    ) -> Things[Post]:
         """
         Get posts from the multireddit.
 
@@ -756,14 +915,14 @@ class MultiRedditEndpoint(Endpoint):
         :param timeframe: Time window for ``top`` and ``controversial``.
         :type timeframe: TIME_FILTERS
         :returns: The posts.
-        :rtype: t.List[Post]
+        :rtype: Things[Post]
         """
 
         params = {"t": timeframe} if listing in ("top", "controversial") else None
         things = self.paginate(
             path=f"/user/{self.owner}/m/{self.name}/{listing}", limit=limit, params=params
         )
-        return [thing for thing in things if isinstance(thing, Post)]
+        return Things(thing for thing in things if isinstance(thing, Post))
 
 
 class Search(Endpoint):
@@ -776,7 +935,7 @@ class Search(Endpoint):
             timeframe: TIME_FILTERS = "all",
             limit: t.Optional[int] = PAGE_LIMIT,
             include_nsfw: bool = True,
-    ) -> t.List[Post]:
+    ) -> Things[Post]:
         """
         Search posts across Reddit.
 
@@ -791,20 +950,20 @@ class Search(Endpoint):
         :param include_nsfw: Whether to include NSFW results.
         :type include_nsfw: bool
         :returns: The matching posts.
-        :rtype: t.List[Post]
+        :rtype: Things[Post]
         """
 
         params: t.Dict[str, t.Any] = {"q": query, "sort": sort, "t": timeframe}
         if include_nsfw:
             params["include_over_18"] = "on"
         things = self.paginate(path="/search", limit=limit, params=params)
-        return [thing for thing in things if isinstance(thing, Post)]
+        return Things(thing for thing in things if isinstance(thing, Post))
 
     def subreddits(
             self,
             query: str,
             limit: t.Optional[int] = PAGE_LIMIT,
-    ) -> t.List[Subreddit]:
+    ) -> Things[Subreddit]:
         """
         Search subreddits by name and description.
 
@@ -813,17 +972,17 @@ class Search(Endpoint):
         :param limit: Most subreddits to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The matching subreddits.
-        :rtype: t.List[Subreddit]
+        :rtype: Things[Subreddit]
         """
 
         things = self.paginate(path="/subreddits/search", limit=limit, params={"q": query})
-        return [thing for thing in things if isinstance(thing, Subreddit)]
+        return Things(thing for thing in things if isinstance(thing, Subreddit))
 
     def users(
             self,
             query: str,
             limit: t.Optional[int] = PAGE_LIMIT,
-    ) -> t.List[User]:
+    ) -> Things[User]:
         """
         Search users by name.
 
@@ -832,60 +991,60 @@ class Search(Endpoint):
         :param limit: Most users to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The matching users.
-        :rtype: t.List[User]
+        :rtype: Things[User]
         """
 
         things = self.paginate(path="/users/search", limit=limit, params={"q": query})
-        return [thing for thing in things if isinstance(thing, User)]
+        return Things(thing for thing in things if isinstance(thing, User))
 
 
 class SubredditsFeed(Endpoint):
     """Bulk subreddit feeds. Reach it as :attr:`Reddit.subreddits`."""
 
-    def popular(self, limit: t.Optional[int] = PAGE_LIMIT) -> t.List[Subreddit]:
+    def popular(self, limit: t.Optional[int] = PAGE_LIMIT) -> Things[Subreddit]:
         """
         Get the popular subreddits feed.
 
         :param limit: Most subreddits to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The subreddits.
-        :rtype: t.List[Subreddit]
+        :rtype: Things[Subreddit]
         """
 
         things = self.paginate(path="/subreddits/popular", limit=limit)
-        return [thing for thing in things if isinstance(thing, Subreddit)]
+        return Things(thing for thing in things if isinstance(thing, Subreddit))
 
-    def new(self, limit: t.Optional[int] = PAGE_LIMIT) -> t.List[Subreddit]:
+    def new(self, limit: t.Optional[int] = PAGE_LIMIT) -> Things[Subreddit]:
         """
         Get the new subreddits feed.
 
         :param limit: Most subreddits to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The subreddits.
-        :rtype: t.List[Subreddit]
+        :rtype: Things[Subreddit]
         """
 
         things = self.paginate(path="/subreddits/new", limit=limit)
-        return [thing for thing in things if isinstance(thing, Subreddit)]
+        return Things(thing for thing in things if isinstance(thing, Subreddit))
 
-    def default(self, limit: t.Optional[int] = PAGE_LIMIT) -> t.List[Subreddit]:
+    def default(self, limit: t.Optional[int] = PAGE_LIMIT) -> Things[Subreddit]:
         """
         Get the default subreddits feed.
 
         :param limit: Most subreddits to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The subreddits.
-        :rtype: t.List[Subreddit]
+        :rtype: Things[Subreddit]
         """
 
         things = self.paginate(path="/subreddits/default", limit=limit)
-        return [thing for thing in things if isinstance(thing, Subreddit)]
+        return Things(thing for thing in things if isinstance(thing, Subreddit))
 
 
 class UsersFeed(Endpoint):
     """Bulk user feeds. Reach it as :attr:`Reddit.users`."""
 
-    def popular(self, limit: t.Optional[int] = PAGE_LIMIT) -> t.List[User]:
+    def popular(self, limit: t.Optional[int] = PAGE_LIMIT) -> Things[User]:
         """
         Get the popular users feed.
 
@@ -894,17 +1053,17 @@ class UsersFeed(Endpoint):
         :param limit: Most users to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The users.
-        :rtype: t.List[User]
+        :rtype: Things[User]
         """
 
         things = self.paginate(path="/users/popular", limit=limit)
-        return [
+        return Things(
             User.from_profile_subreddit(data=thing.raw)
             for thing in things
             if isinstance(thing, Subreddit)
-        ]
+        )
 
-    def new(self, limit: t.Optional[int] = PAGE_LIMIT) -> t.List[User]:
+    def new(self, limit: t.Optional[int] = PAGE_LIMIT) -> Things[User]:
         """
         Get the new users feed.
 
@@ -913,15 +1072,15 @@ class UsersFeed(Endpoint):
         :param limit: Most users to return, or None for all.
         :type limit: t.Optional[int]
         :returns: The users.
-        :rtype: t.List[User]
+        :rtype: Things[User]
         """
 
         things = self.paginate(path="/users/new", limit=limit)
-        return [
+        return Things(
             User.from_profile_subreddit(data=thing.raw)
             for thing in things
             if isinstance(thing, Subreddit)
-        ]
+        )
 
 
 class Reddit:

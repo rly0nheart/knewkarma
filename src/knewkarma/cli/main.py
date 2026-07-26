@@ -6,6 +6,7 @@ table through a pager, and can export it to json or csv.
 """
 
 import argparse
+import sys
 import typing as t
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,9 +14,9 @@ from pathlib import Path
 from rich.console import Console
 from rich.pretty import Pretty
 
-from . import export
 from .. import KINDS, LISTINGS, SORT, TIME_FILTERS, Reddit
-from ..core.models import RedditObject
+from ..core.api import SubredditEndpoint, UserEndpoint
+from ..core.models import RedditObject, Things
 from ..meta.about import Project
 from ..meta.license import License
 from ..meta.version import Version
@@ -23,7 +24,7 @@ from ..meta.version import Version
 EXPORT_DIR = "exports"
 console = Console(log_time=False)
 # What a command hands back: one model, a row of models or wiki page names, or nothing.
-Result = t.Union[RedditObject, t.Sequence[t.Union[RedditObject, str]], None]
+Result = t.Union[RedditObject, Things, None]
 
 
 def __pretty_print(items: Result):
@@ -177,14 +178,16 @@ def __run_command(
     if not formats or not data:
         return
 
-    rows: t.Sequence[t.Union[RedditObject, str]] = (
-        [data] if isinstance(data, RedditObject) else list(data)
-    )
-    Path(EXPORT_DIR).mkdir(exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    base = str(Path(EXPORT_DIR) / f"{command}-{label}-{stamp}")
+    base = Path(EXPORT_DIR) / f"{command}-{label}-{stamp}"
+    written: t.List[str] = []
     with console.status(f"[dim]Exporting {command} {label}[/]…"):
-        written = export.write(rows, base, formats)
+        for fmt in formats:
+            if fmt == "json":
+                written.append(data.to_json(f"{base}.json"))
+            elif fmt == "csv":
+                written.append(data.to_csv(f"{base}.csv"))
+
     for path in written:
         console.log(f"Wrote {path}")
 
@@ -412,11 +415,11 @@ def __cmd_user_moderated(args: argparse.Namespace, reddit: Reddit):
 
     __run_command(
         reddit=reddit,
-        thunk=lambda: reddit.user(args.name).moderated(),
+        thunk=lambda: reddit.user(args.username).moderated(),
         command="user",
-        label=f"{args.name}-moderated",
+        label=f"{args.username}-moderated",
         export_formats=args.export,
-        status_msg=f"Getting subreddits moderated by u/{args.name}",
+        status_msg=f"Getting subreddits moderated by u/{args.username}",
     )
 
 
@@ -425,11 +428,11 @@ def __cmd_user_trophies(args: argparse.Namespace, reddit: Reddit):
 
     __run_command(
         reddit=reddit,
-        thunk=lambda: reddit.user(args.name).trophies(),
+        thunk=lambda: reddit.user(args.username).trophies(),
         command="user",
-        label=f"{args.name}-trophies",
+        label=f"{args.username}-trophies",
         export_formats=args.export,
-        status_msg=f"Getting trophies for u/{args.name}",
+        status_msg=f"Getting trophies for u/{args.username}",
     )
 
 
@@ -479,6 +482,37 @@ def __cmd_search(args: argparse.Namespace, reddit: Reddit):
             export_formats=args.export,
             status_msg=f"Searching posts for '{args.query}'",
         )
+
+
+def __target_exists(args: argparse.Namespace, reddit: Reddit) -> bool:
+    """
+    Check that the user or subreddit a command names is there, before anything is fetched.
+
+    Commands that name no user or subreddit pass straight through.
+
+    :param args: The parsed arguments.
+    :type args: argparse.Namespace
+    :param reddit: The Reddit handle to read through.
+    :type reddit: Reddit
+    :returns: True when the target is there, or when the command names none.
+    :rtype: bool
+    """
+
+    handle: t.Union[UserEndpoint, SubredditEndpoint]
+    if args.command == "user":
+        handle, label, kind = reddit.user(args.username), f"u/{args.username}", "user"
+    elif args.command == "subreddit":
+        handle, label, kind = reddit.subreddit(args.name), f"r/{args.name}", "subreddit"
+    else:
+        return True
+
+    with console.status(f"[dim]Checking {kind} ({label}) availability[/]…"):
+        found = handle.exists()
+    if found:
+        console.log(f"[green]{kind.title()} {label} exists[/].")
+    else:
+        console.log(f"[yellow]{kind.title()} {label} does not exist[/].")
+    return found
 
 
 def __cmd_license():
@@ -684,12 +718,16 @@ def run_cli(argv: t.Optional[t.Sequence[str]] = None):
     Catches a Ctrl-C and any error so the program ends with a clear line rather than a traceback,
     then reports how long it ran. A plain ``--help`` or ``--version`` exits before that line.
 
+    An error exits non-zero, so a script can tell a failed run from an empty one. A Ctrl-C is the
+    user's own doing, so it stays a success.
+
     :param argv: Arguments to parse. Defaults to ``sys.argv``.
     :type argv: t.Optional[t.Sequence[str]]
     """
 
     start_time = datetime.now(timezone.utc)
     console.set_window_title(title=f"{Project.name} v{Version.release}")
+    failed = False
     try:
         parser = __build_parser()
         args = parser.parse_args(argv)
@@ -697,14 +735,18 @@ def run_cli(argv: t.Optional[t.Sequence[str]] = None):
             args.func()
         else:
             with Reddit() as reddit:
-                args.func(args=args, reddit=reddit)
+                if __target_exists(args=args, reddit=reddit):
+                    args.func(args=args, reddit=reddit)
     except KeyboardInterrupt:
         console.log("\nUser interruption detected ([yellow]Ctrl+C[/])")
     except Exception as e:
         console.log(f"An error occurred: [red]{e}[/]")
+        failed = True
 
     elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
     console.log(f"Finished in {elapsed:.2f}s")
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
