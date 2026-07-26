@@ -6,6 +6,8 @@ from .core.models import (
     MultiReddit,
     Post,
     Subreddit,
+    Thing,
+    Things,
     Trophy,
     User,
 )
@@ -18,6 +20,8 @@ __all__ = [
     "Subreddit",
     "Trophy",
     "MultiReddit",
+    "Thing",
+    "Things",
     "KINDS",
     "LISTINGS",
     "SORT",

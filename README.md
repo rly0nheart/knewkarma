@@ -1,4 +1,5 @@
-**Knew Karma** (*/nuː ‘kɑːrmə/*) is a data analysis toolkit designed to provide an extensive range of functionalities
+**Knew Karma** (*/nuː ‘kɑːrmə/*) is a no-auth data analysis toolkit designed to provide an extensive range of
+functionalities
 for exploring and analysing Reddit data.
 <p>
   <a href="https://github.com/rly0nheart/knewkarma"><img alt="Code Style" src="https://img.shields.io/badge/code%20style-black-000000?logo=github&link=https%3A%2F%2Fgithub.com%2Frly0nheart%2Fknewkarma"></a>
@@ -14,9 +15,9 @@ knewkarma user spez
 from pprint import pprint
 from knewkarma import Reddit
 
-reddit = Reddit(user_agent="MyKnewKarmaApp/1.0")
-user = reddit.user(username="spez").about()
-pprint(user)
+with Reddit() as client:
+    user_profile = client.user(username="spez").about()
+    pprint(user_profile)
 ```
 
 ## Read the Docs

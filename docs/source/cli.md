@@ -26,6 +26,10 @@ knewkarma post POST_ID comments --sort top --limit 100
 knewkarma post POST_ID comments --depth 2
 ```
 
+`--depth` sets how far to follow Reddit's `load more` stubs: `0` follows none, `1` gets every
+top-level comment, higher also loads nested replies. Following them costs requests, so a read
+stops after 256 of them and hands back whatever stubs are left unfollowed.
+
 ## Feeds
 
 ```console

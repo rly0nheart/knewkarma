@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.0.0] - 2026-07-26
+
+Breaking: `comments()` stops after 256 requests, so a `depth=None` read that used to return the
+whole tree can now come back part read. Pass `budget=None` for the old behaviour.
+
+### Added
+
+- Models write themselves out: `to_dict()`, `to_json(path, indent=2)`, `to_csv(path)`.
+- Reads that return many things return a `Things` list, carrying those same methods.
+- `Thing` and `Things` are exported from the package root.
+- `comments()` takes a `budget` capping the requests spent following stubs. Defaults to 256,
+  `None` lifts it. Stubs left unfollowed come back as they are.
+- The CLI checks a user or subreddit exists before fetching.
+
+### Changed
+
+- `more` comments load in bulk, 100 ids a request instead of one. On a 6,102-comment thread, 41
+  requests instead of 4,016.
+- Nested csv fields are written as json, not a Python repr.
+- The CLI exits non-zero on failure. A Ctrl-C still exits zero.
+
+### Fixed
+
+- `user USER moderated` and `user USER trophies` crashed on every run.
+- `subreddit("").comments()` and `.search()` built a doubled slash and returned nothing.
+- Reading comments rewrote the response it was handed.
+- A `more` stub that resolved to itself was chased until the stack ran out, at any `depth`.
+
+### Removed
+
+- The `knewkarma.cli.export` module.
+
 ## [9.1.2] - 2026-07-25
 
 ### Added

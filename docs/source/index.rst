@@ -1,7 +1,7 @@
 Knew Karma
 ==========
 
-**Knew Karma** (*/nuː ‘kɑːrmə/*) is a data analysis toolkit designed to provide an extensive range of
+**Knew Karma** (*/nuː ‘kɑːrmə/*) is a no-auth data analysis toolkit designed to provide an extensive range of
 functionalities for exploring and analysing Reddit data.
 
 .. raw:: html

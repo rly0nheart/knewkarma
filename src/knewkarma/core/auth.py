@@ -42,6 +42,16 @@ class RateLimit:
         if nap > 0:
             time.sleep(nap)
 
+    def back_off(self, headers: t.Mapping[str, str]):
+        """
+        Sleep off a 429 before the request is tried again.
+
+        :param headers: The response headers.
+        :type headers: t.Mapping[str, str]
+        """
+
+        time.sleep(self.pause(headers))
+
     def update(self, headers: t.Mapping[str, str]):
         """
         Read the rate limit headers and work out when the next request is due.
