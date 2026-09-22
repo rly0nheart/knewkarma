@@ -1,15 +1,15 @@
-<head>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet"/>
-</head>
+{%- macro icon(paths) -%}
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align: -0.125em; margin-right: 0.25em">{{ paths }}</svg>
+{%- endmacro -%}
 
 <h3>Jump to Page</h3>
 <ul>
     {%- if pagename != "index" %}
-    <li><i class="fa-solid fa-house"></i> <a href="{{ pathto('index') }}">Home</a></li>
+    <li>{{ icon('<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>') }}<a href="{{ pathto('index') }}">Home</a></li>
     {%- endif %}
-    <li><i class="fa-solid fa-download"></i> <a href="{{ pathto('installation') }}">Installation</a></li>
-    <li><i class="fa-solid fa-keyboard"></i> <a href="{{ pathto('cli') }}">Command-Line Interface</a></li>
-    <li><i class="fa-solid fa-book"></i> <a href="{{ pathto('api') }}">Python API</a></li>
+    <li>{{ icon('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>') }}<a href="{{ pathto('installation') }}">Installation</a></li>
+    <li>{{ icon('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>') }}<a href="{{ pathto('cli') }}">Command-Line Interface</a></li>
+    <li>{{ icon('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>') }}<a href="{{ pathto('api') }}">Python API</a></li>
 </ul>
 
 {%- if pagename != "index" %}
@@ -19,7 +19,7 @@
 
 <h3>Useful Links</h3>
 <ul>
-    <li><svg role="img" viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" style="vertical-align:-0.125em"><path d="M11.999.747A11.974 11.974 0 0 0 0 12.75c0 2.254.635 4.465 1.833 6.376L11.837 6.19c.072-.092.251-.092.323 0l4.178 5.402h-2.992l.065.239h3.113l.882 1.138h-3.674l.103.374h3.86l.777 1.003h-4.358l.135.483h4.593l.695.894h-5.038l.165.589h5.326l.609.785h-5.717l.182.65h6.038l.562.727h-6.397l.183.65h6.717A12.003 12.003 0 0 0 24 12.75 11.977 11.977 0 0 0 11.999.747zm3.654 19.104.182.65h5.326c.173-.204.353-.433.513-.65zm.385 1.377.18.65h3.563c.233-.198.485-.428.712-.65zm.383 1.377.182.648h1.203c.356-.204.685-.412 1.042-.648z"/></svg> <a href="https://codeberg.org/knewkarma/knewkarma">Codeberg</a></li>
-    <li><i class="fa-brands fa-python"></i> <a href="https://pypi.org/project/knewkarma/">PyPI Package</a></li>
-    <li><i class="fa-solid fa-bug"></i> <a href="https://codeberg.org/knewkarma/knewkarma/issues">Bug Tracker</a></li>
+    <li>{{ icon('<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>') }}<a href="https://github.com/rly0nheart/knewkarma">GitHub</a></li>
+    <li>{{ icon('<line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>') }}<a href="https://pypi.org/project/knewkarma/">PyPI Package</a></li>
+    <li>{{ icon('<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>') }}<a href="https://github.com/rly0nheart/knewkarma/issues">Bug Tracker</a></li>
 </ul>

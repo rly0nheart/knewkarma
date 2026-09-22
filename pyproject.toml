@@ -1,7 +1,7 @@
 [project]
 name = "knewkarma"
-version = "10.0.0"
-description = "No-auth Reddit-data analysis toolkit"
+version = "10.0.1"
+description = "Zero-auth toolkit for Reddit-data analysis"
 authors = [{ name = "Ritchie Mwewa", email = "rly0nheart@duck.com" }]
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -21,8 +21,8 @@ dependencies = [
 ]
 
 [project.urls]
-issues = "https://codeberg.org/knewkarma/knewkarma/issues"
-repository = "https://codeberg.org/knewkarma/knewkarma"
+issues = "https://github.com/rly0nheart/knewkarma/issues"
+repository = "https://github.com/rly0nheart/knewkarma"
 documentation = "https://knewkarma.readthedocs.io"
 
 [project.scripts]
